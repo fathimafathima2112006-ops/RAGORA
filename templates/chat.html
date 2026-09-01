@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAGORA</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="theme-dark app-page">
+<div class="app-bg" aria-hidden="true"><div class="aurora a1"></div><div class="aurora a2"></div><div class="aurora a3"></div><div class="bg-grid"></div></div>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-head"><button class="brand" id="brandHome"><span class="brand-mark">R</span><span>RAGORA</span></button><button class="icon-btn mobile-only" id="closeSidebar">×</button></div>
+    <button id="newChatBtn" class="new-chat"><span class="new-icon">＋</span><span>New chat</span><kbd>Ctrl K</kbd></button>
+    <button id="companionOpenBtn" class="new-chat companion-open-btn"><span class="new-icon">☺</span><span>AI Chat</span><span class="companion-dot" id="companionDot" hidden></span></button>
+    <div class="side-section"><div class="section-title">RECENT CHATS</div><div id="conversationList" class="conversation-list"></div></div>
+    <div class="side-section knowledge"><div class="section-head"><div class="section-title">KNOWLEDGE</div><button id="uploadSideBtn" class="mini-add" title="Upload document">＋</button></div><div id="knowledgeMeter" class="knowledge-meter"><div class="barcode" id="knowledgeBarcode" aria-label="Knowledge chunks"></div><div class="knowledge-stats"><b id="knowledgeChunks">0 chunks</b><span id="knowledgeDocs">0 documents</span></div></div><div id="sidebarDocs" class="sidebar-docs"><div class="empty-docs">No documents yet</div></div></div>
+    <div class="sidebar-spacer"></div>
+    <div class="sidebar-bottom">
+      <div class="profile"><img src="{{ picture }}" referrerpolicy="no-referrer" alt=""><div><strong>{{ name }}</strong><span>Signed in</span></div></div>
+      <div class="profile-actions"><button id="themeToggle" class="icon-btn" title="Theme">◐</button><a href="{{ url_for('logout') }}" class="icon-btn" title="Sign out">↪</a></div>
+    </div>
+  </aside>
+  <div id="sidebarOverlay" class="sidebar-overlay"></div>
+
+  <main class="chat-main">
+    <header class="topbar">
+      <div class="top-left"><button id="openSidebar" class="icon-btn mobile-only">☰</button><div class="top-title"><span class="status-dot"></span><span id="chatTitle">New chat</span></div></div>
+      <div class="top-actions"><span class="mode-pill"><i></i> Knowledge + Web</span><button id="exportBtn" class="icon-btn top-export" title="Export chat">⇩</button></div>
+    </header>
+
+    <section id="messages" class="messages">
+      <div id="emptyState" class="welcome">
+        <div class="welcome-visual"><div class="welcome-ring ring-x"></div><div class="welcome-ring ring-y"></div><div class="welcome-core">R</div></div>
+        <p class="welcome-eyebrow">RAGORA WORKSPACE</p>
+        <h1>What are we exploring<br><span>today?</span></h1>
+        <p class="welcome-copy">Bring a document into the conversation, then ask anything in English, தமிழ், or Tanglish.</p>
+        <div class="quick-grid">
+          <button data-prompt="Summarize the uploaded document"><span>01</span><b>Summarize</b><small>Get the key ideas fast</small></button>
+          <button data-prompt="Explain the document in simple Tamil"><span>02</span><b>Explain simply</b><small>Clear Tamil explanation</small></button>
+          <button data-prompt="Find the most important points in the document"><span>03</span><b>Find key points</b><small>Important details only</small></button>
+          <button data-prompt="What information is missing from the document?"><span>04</span><b>Check the gaps</b><small>Know what the file doesn't say</small></button>
+        </div>
+      </div>
+    </section>
+
+    <section class="composer-area">
+      <div id="docStrip" class="doc-strip"><div class="knowledge-inline" id="knowledgeInline"><span class="inline-barcode" id="inlineBarcode"></span><span><b id="inlineChunks">0 chunks</b> · <span id="inlineDocs">0 docs</span></span></div></div>
+      <div class="composer-shell">
+        <form id="chatForm" class="composer">
+          <input id="fileInput" type="file" hidden accept=".pdf,.docx,.txt,.md,.csv,.xlsx,.json,.py,.js,.ts,.java,.c,.cpp,.html,.css,.sql">
+          <button type="button" id="uploadBtn" class="attach-btn" title="Add document"><span>＋</span></button>
+          <textarea id="chatInput" rows="1" placeholder="Message RAGORA..." autocomplete="off"></textarea>
+          <button type="submit" id="sendBtn" class="send-btn" aria-label="Send"><span>↑</span></button>
+        </form>
+        <div class="composer-meta"><span>Enter to send · Shift + Enter for a new line</span><span>Knowledge stays across chats</span></div>
+      </div>
+    </section>
+  </main>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<!-- AI Chat: friendly companion side-panel (separate from the document-first chat) -->
+<div id="companionOverlay" class="companion-overlay"></div>
+<aside id="companionPanel" class="companion-panel" aria-hidden="true">
+  <div class="companion-head">
+    <div class="companion-title"><span class="companion-avatar">☺</span><div><strong>AI Chat</strong><div class="companion-knowledge"><span class="companion-barcode" id="companionBarcode"></span><span id="companionStats">0 docs · 0 chunks</span></div></div></div>
+    <button id="companionCloseBtn" class="icon-btn" title="Close">×</button>
+  </div>
+  <div id="companionMessages" class="companion-messages"></div>
+  <form id="companionForm" class="companion-composer">
+    <input id="companionInput" type="text" placeholder="Type here... e.g. Good morning!" autocomplete="off">
+    <button type="submit" class="send-btn" aria-label="Send"><span>↑</span></button>
+  </form>
+</aside>
+
+<script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+</body>
+</html>
