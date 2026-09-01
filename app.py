@@ -95,6 +95,7 @@ def auth_google():
     return redirect(f"{GOOGLE_AUTH_URL}?{urlencode(params)}")
 
 
+@app.route("/auth/google/callback")
 @app.route("/auth/callback")
 def auth_callback():
     _cleanup_expired_states()
