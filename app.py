@@ -328,21 +328,26 @@ def _answer_for_conversation(conv_id, user_id, user_message):
     # 8K tokens/minute / request-size failures when history + RAG context grow.
     doc_context = None
     match_percent = 0
+    citations = []
     if selected:
         pieces = []
         used_chars = 0
-        for c, score in selected:
+        # Number each piece [1], [2]... in the same order build_citations()
+        # uses, so the model's inline citation markers line up with the
+        # source chips the UI renders.
+        for i, (c, score) in enumerate(selected, start=1):
             if used_chars >= 3200:
                 break
             remaining = 3200 - used_chars
             text = c["chunk_text"][:min(850, remaining)]
-            pieces.append(f"[{c['filename']}]\n{text}")
+            pieces.append(f"[{i}] ({c['filename']})\n{text}")
             used_chars += len(text)
         doc_context = "\n\n---\n\n".join(pieces)
         # This is retrieval match, not a claim that the answer is objectively
         # correct. It gives the UI a useful, honest percentage indicator.
         best_score = selected[0][1]
         match_percent = max(0, min(99, round(best_score * 150)))
+        citations = rag_engine.build_citations(selected)
 
     started = time.perf_counter()
     result = rag_engine.generate_answer(history, user_message[:2000], doc_context)
@@ -350,6 +355,10 @@ def _answer_for_conversation(conv_id, user_id, user_message):
     result["match_percent"] = match_percent
     result["knowledge_docs"] = db.user_document_stats(user_id)["documents"]
     result["knowledge_chunks"] = db.user_document_stats(user_id)["chunks"]
+    # Only attach document citations when the answer actually used the
+    # document path (not the web-search fallback), so citation chips never
+    # get shown next to a web-sourced answer.
+    result["citations"] = citations if (citations and not result.get("used_web")) else []
     return result
 
 
@@ -378,6 +387,7 @@ def api_chat():
         "answer": result["answer"],
         "used_web": bool(result["used_web"]),
         "sources": result.get("sources", []),
+        "citations": result.get("citations", []),
         "used_docs": bool(db.get_chunks_for_user(session["user_id"])),
         "match_percent": result.get("match_percent", 0),
         "elapsed_ms": result.get("elapsed_ms", 0),
@@ -413,6 +423,7 @@ def api_regenerate():
         "answer": result["answer"],
         "used_web": bool(result["used_web"]),
         "sources": result.get("sources", []),
+        "citations": result.get("citations", []),
         "match_percent": result.get("match_percent", 0),
         "elapsed_ms": result.get("elapsed_ms", 0),
         "knowledge_docs": result.get("knowledge_docs", 0),

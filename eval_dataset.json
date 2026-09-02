@@ -1,0 +1,10 @@
+[
+  {
+    "question": "Summarize the uploaded document",
+    "relevant_filenames": ["your_file.pdf"]
+  },
+  {
+    "question": "What are the key points?",
+    "relevant_filenames": ["your_file.pdf"]
+  }
+]

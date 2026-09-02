@@ -169,62 +169,178 @@ def chunk_text(text, chunk_size=None, overlap=None):
 
 
 # ----------------------------------------------------------------------
-# Retrieval
+# Retrieval — hybrid search (TF-IDF + BM25 + keyword) with a lexical
+# rerank pass and structured citation metadata.
 # ----------------------------------------------------------------------
+_TOKEN_RE = re.compile(r"[\w\u0B80-\u0BFF]{2,}")
+
+
 def _normalize(text):
     return re.sub(r"\s+", " ", (text or "").lower()).strip()
 
 
+def _tokenize(text):
+    return _TOKEN_RE.findall(_normalize(text))
+
+
 def _keyword_score(query, text):
-    q = set(re.findall(r"[\w\u0B80-\u0BFF]{2,}", _normalize(query)))
+    q = set(_tokenize(query))
     if not q:
         return 0.0
-    t = set(re.findall(r"[\w\u0B80-\u0BFF]{2,}", _normalize(text)))
+    t = set(_tokenize(text))
     return len(q & t) / max(1, len(q))
 
 
+def _minmax(values):
+    if not values:
+        return values
+    lo, hi = min(values), max(values)
+    if hi - lo < 1e-9:
+        return [0.0 for _ in values]
+    return [(v - lo) / (hi - lo) for v in values]
+
+
+def _tfidf_scores(query, texts):
+    """Dense-ish semantic-lexical signal: word n-grams catch meaning/vocabulary
+    overlap, char n-grams catch Tamil/Tanglish spelling variation and typos."""
+    if not (SKLEARN_OK and len(texts) > 1):
+        return [0.0] * len(texts)
+    try:
+        word = TfidfVectorizer(analyzer="word", ngram_range=(1, 2), sublinear_tf=True, max_features=30000)
+        char = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5), sublinear_tf=True, max_features=50000)
+        wm = word.fit_transform(texts + [query])
+        cm = char.fit_transform(texts + [query])
+        ws = cosine_similarity(wm[-1], wm[:-1]).ravel()
+        cs = cosine_similarity(cm[-1], cm[:-1]).ravel()
+        return [0.70 * w + 0.30 * c for w, c in zip(ws, cs)]
+    except ValueError:
+        return [0.0] * len(texts)
+
+
+def _bm25_scores(query, texts, k1=1.5, b=0.75):
+    """Pure-python Okapi BM25 — a classic sparse/lexical ranking signal that
+    complements TF-IDF cosine similarity (which normalises away document
+    length and term-frequency saturation differently). No extra dependency
+    needed, so this keeps working on any deployment target."""
+    q_terms = _tokenize(query)
+    if not q_terms:
+        return [0.0] * len(texts)
+    doc_tokens = [_tokenize(t) for t in texts]
+    doc_lens = [len(d) or 1 for d in doc_tokens]
+    avgdl = sum(doc_lens) / max(1, len(doc_lens))
+    n_docs = len(texts)
+
+    df = {}
+    for term in set(q_terms):
+        df[term] = sum(1 for d in doc_tokens if term in d)
+
+    idf = {}
+    for term, freq in df.items():
+        idf[term] = max(0.0, __import__("math").log((n_docs - freq + 0.5) / (freq + 0.5) + 1))
+
+    scores = []
+    for tokens, dlen in zip(doc_tokens, doc_lens):
+        if not tokens:
+            scores.append(0.0)
+            continue
+        tf = {}
+        for tok in tokens:
+            tf[tok] = tf.get(tok, 0) + 1
+        score = 0.0
+        for term in q_terms:
+            f = tf.get(term, 0)
+            if f == 0:
+                continue
+            numer = f * (k1 + 1)
+            denom = f + k1 * (1 - b + b * dlen / avgdl)
+            score += idf.get(term, 0.0) * (numer / denom)
+        scores.append(score)
+    return scores
+
+
+def _reciprocal_rank_fusion(*score_lists, k=60):
+    """Standard hybrid-search fusion: rank each signal independently, then
+    combine by reciprocal rank so no single signal's raw scale dominates."""
+    n = len(score_lists[0]) if score_lists else 0
+    rrf = [0.0] * n
+    for scores in score_lists:
+        order = sorted(range(n), key=lambda i: scores[i], reverse=True)
+        for rank, idx in enumerate(order):
+            if scores[idx] <= 0:
+                continue
+            rrf[idx] += 1.0 / (k + rank + 1)
+    return rrf
+
+
+def _rerank(query, candidates):
+    """Lightweight cross-check reranker applied to the shortlist from hybrid
+    retrieval. Rewards exact phrase containment and full query-term coverage
+    (signals a single embedding/BM25 score can miss), and mildly penalises
+    chunks so short or so long that a match is likely coincidental."""
+    q_norm = _normalize(query)
+    q_terms = set(_tokenize(query))
+    rescored = []
+    for row, base_score in candidates:
+        text = row["chunk_text"]
+        t_norm = _normalize(text)
+        t_terms = set(_tokenize(text))
+        coverage = len(q_terms & t_terms) / max(1, len(q_terms))
+        phrase_bonus = 0.25 if len(q_norm) > 6 and q_norm in t_norm else 0.0
+        length_penalty = 0.05 if len(text) < 40 else 0.0
+        rerank_signal = coverage + phrase_bonus - length_penalty
+        final = 0.6 * base_score + 0.4 * min(1.0, max(0.0, rerank_signal))
+        rescored.append((row, final))
+    rescored.sort(key=lambda pair: pair[1], reverse=True)
+    return rescored
+
+
 def retrieve_relevant_chunks(query, chunk_rows, top_k=None, return_scores=False):
-    """Hybrid multilingual lexical + TF-IDF retrieval."""
+    """Hybrid retrieval pipeline: TF-IDF + BM25 + keyword-overlap candidates
+    fused with reciprocal rank fusion, then reranked with a lexical
+    cross-check pass before the final top_k cut."""
     top_k = top_k or Config.TOP_K_CHUNKS
     if not chunk_rows:
         return []
 
     texts = [c["chunk_text"] for c in chunk_rows]
-    scores = [0.0] * len(texts)
+    tfidf = _tfidf_scores(query, texts)
+    bm25 = _bm25_scores(query, texts)
+    keyword = [_keyword_score(query, t) for t in texts]
 
-    if SKLEARN_OK and len(texts) > 1:
-        try:
-            word = TfidfVectorizer(
-                analyzer="word", ngram_range=(1, 2),
-                sublinear_tf=True, max_features=30000
-            )
-            char = TfidfVectorizer(
-                analyzer="char_wb", ngram_range=(3, 5),
-                sublinear_tf=True, max_features=50000
-            )
-            wm = word.fit_transform(texts + [query])
-            cm = char.fit_transform(texts + [query])
-            ws = cosine_similarity(wm[-1], wm[:-1]).ravel()
-            cs = cosine_similarity(cm[-1], cm[:-1]).ravel()
-            scores = [0.70 * w + 0.30 * c for w, c in zip(ws, cs)]
-        except ValueError:
-            pass
+    rrf = _reciprocal_rank_fusion(tfidf, bm25, keyword)
+    hybrid = [
+        0.55 * a + 0.30 * b + 0.10 * c + 0.05 * (d * 10)
+        for a, b, c, d in zip(_minmax(tfidf), _minmax(bm25), keyword, rrf)
+    ]
 
-    # Add a small exact-term signal; this helps Tamil/Tanglish and identifiers.
-    scores = [0.85 * s + 0.15 * _keyword_score(query, text)
-              for s, text in zip(scores, texts)]
+    ranked = sorted(zip(hybrid, chunk_rows), key=lambda pair: pair[0], reverse=True)
+    # Do not pretend a random chunk is relevant — cut noise before reranking.
+    shortlist = [(row, score) for score, row in ranked if score >= Config.RETRIEVAL_MIN_SCORE][:max(top_k * 5, 15)]
+    reranked = _rerank(query, shortlist)
+    selected = reranked[:top_k]
 
-    ranked = sorted(
-        zip(scores, chunk_rows),
-        key=lambda pair: pair[0],
-        reverse=True,
-    )
-
-    # Do not pretend a random chunk is relevant.
-    selected = [(row, score) for score, row in ranked if score >= Config.RETRIEVAL_MIN_SCORE][:top_k]
     if return_scores:
         return selected
     return [row for row, _score in selected]
+
+
+def build_citations(selected):
+    """Turn retrieved (row, score) pairs into numbered citation metadata the
+    UI and the LLM prompt can both reference, e.g. '[1]'."""
+    citations = []
+    for i, (row, score) in enumerate(selected, start=1):
+        text = row["chunk_text"]
+        page_match = re.search(r"\[Page (\d+)\]", text)
+        snippet = re.sub(r"\[Page \d+\]", "", text).strip()
+        snippet = re.sub(r"\s+", " ", snippet)[:220]
+        citations.append({
+            "index": i,
+            "filename": row["filename"],
+            "page": int(page_match.group(1)) if page_match else None,
+            "snippet": snippet,
+            "confidence": round(max(0.0, min(1.0, score)) * 100),
+        })
+    return citations
 
 
 # ----------------------------------------------------------------------
@@ -242,37 +358,12 @@ def web_search(query, max_results=5):
 # LLM
 # ----------------------------------------------------------------------
 SYSTEM_PROMPT = """You are RAGORA. Answer in the user's Tamil/Tanglish/English style.
-Use DOCUMENT CONTEXT only when it actually supports the answer. Do not invent document facts.
-Be concise and direct. If the document does not contain the answer, the caller may provide web evidence.
+Use DOCUMENT EVIDENCE only when it actually supports the answer. Do not invent document facts.
+The DOCUMENT EVIDENCE is numbered like [1], [2], [3] in the order given. When a sentence you
+write is supported by one of those items, add its bracket number right after it, e.g. "...அப்படி
+irukum [1]." Only cite numbers that were actually given to you. Be concise and direct. If the
+document does not contain the answer, the caller may provide web evidence instead.
 """
-
-def _normalize(text):
-    return re.sub(r"\s+", " ", (text or "").lower()).strip()
-
-def _keyword_score(query, text):
-    q = set(re.findall(r"[\w\u0B80-\u0BFF]{2,}", _normalize(query)))
-    t = set(re.findall(r"[\w\u0B80-\u0BFF]{2,}", _normalize(text)))
-    return len(q & t) / max(1, len(q)) if q else 0.0
-
-def retrieve_relevant_chunks(query, chunk_rows, top_k=None, return_scores=False):
-    top_k = top_k or Config.TOP_K_CHUNKS
-    if not chunk_rows:
-        return []
-    texts = [c["chunk_text"] for c in chunk_rows]
-    scores = [0.0] * len(texts)
-    if SKLEARN_OK and len(texts) > 1:
-        try:
-            word = TfidfVectorizer(analyzer="word", ngram_range=(1,2), sublinear_tf=True, max_features=12000)
-            char = TfidfVectorizer(analyzer="char_wb", ngram_range=(3,5), sublinear_tf=True, max_features=16000)
-            wm = word.fit_transform(texts + [query]); cm = char.fit_transform(texts + [query])
-            ws = cosine_similarity(wm[-1], wm[:-1]).ravel(); cs = cosine_similarity(cm[-1], cm[:-1]).ravel()
-            scores = [0.75*w + 0.25*c for w,c in zip(ws,cs)]
-        except ValueError:
-            pass
-    scores = [0.85*s + 0.15*_keyword_score(query,t) for s,t in zip(scores,texts)]
-    ranked = sorted(zip(scores, chunk_rows), key=lambda x:x[0], reverse=True)
-    selected = [(row,score) for score,row in ranked if score >= Config.RETRIEVAL_MIN_SCORE][:top_k]
-    return selected if return_scores else [row for row,_ in selected]
 
 def build_messages(history, user_message, doc_context=None):
     # Keep the entire request intentionally tiny. This is critical for the 8K TPM org limit.
