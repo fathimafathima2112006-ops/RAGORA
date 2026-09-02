@@ -2,7 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#07080d">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="RAGORA">
+<link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/icon-192.svg') }}">
 <title>RAGORA</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
@@ -25,7 +32,7 @@
 
   <main class="chat-main">
     <header class="topbar">
-      <div class="top-left"><button id="openSidebar" class="icon-btn mobile-only">☰</button><div class="top-title"><span class="status-dot"></span><span id="chatTitle">New chat</span></div></div>
+      <div class="top-left"><button id="openSidebar" class="icon-btn mobile-only" aria-label="Menu">☰</button><span class="topbar-brand"><span class="brand-mark">R</span><b>RAGORA</b></span><div class="top-title"><span class="status-dot"></span><span id="chatTitle">New chat</span></div></div>
       <div class="top-actions"><span class="mode-pill"><i></i> Knowledge + Web</span><button id="exportBtn" class="icon-btn top-export" title="Export chat">⇩</button></div>
     </header>
 
@@ -65,7 +72,7 @@
 <aside id="companionPanel" class="companion-panel" aria-hidden="true">
   <div class="companion-head">
     <div class="companion-title"><span class="companion-avatar">☺</span><div><strong>AI Chat</strong><div class="companion-knowledge"><span class="companion-barcode" id="companionBarcode"></span><span id="companionStats">0 docs · 0 chunks</span></div></div></div>
-    <button id="companionCloseBtn" class="icon-btn" title="Close">×</button>
+    <div class="companion-head-actions"><button id="companionDeleteBtn" class="icon-btn" title="Delete chat">🗑</button><button id="companionCloseBtn" class="icon-btn" title="Close">×</button></div>
   </div>
   <div id="companionMessages" class="companion-messages"></div>
   <form id="companionForm" class="companion-composer">
