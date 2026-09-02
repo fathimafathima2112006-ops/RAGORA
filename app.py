@@ -306,6 +306,72 @@ def api_delete_document(doc_id):
     return jsonify({"ok": True})
 
 
+import evaluation
+
+# ---------------- Knowledge / analytics APIs ----------------
+@app.route("/api/stats", methods=["GET"])
+@login_required
+def api_stats():
+    return jsonify(db.global_stats(session["user_id"]))
+
+@app.route("/api/documents/<int:doc_id>/chunks", methods=["GET"])
+@login_required
+def api_document_chunks(doc_id):
+    docs = [d for d in db.list_documents(session["user_id"]) if d["id"] == doc_id]
+    if not docs:
+        return jsonify({"error": "not_found"}), 404
+    rows = db.get_document_chunks(doc_id, session["user_id"])
+    for r in rows:
+        import re
+        m = re.search(r"\[Page (\d+)\]", r["chunk_text"])
+        r["page"] = int(m.group(1)) if m else None
+        r["tokens"] = max(1, round(len(r["chunk_text"]) / 4))
+    return jsonify(rows)
+
+@app.route("/api/retrieval", methods=["POST"])
+@login_required
+def api_retrieval():
+    data=request.get_json(silent=True) or {}
+    question=(data.get("question") or "").strip()
+    if not question: return jsonify({"error":"question required"}),400
+    top_k=max(1,min(int(data.get("top_k") or Config.TOP_K_CHUNKS),8))
+    rows=db.get_chunks_for_user(session["user_id"])
+    selected=rag_engine.retrieve_relevant_chunks(question,rows,top_k=top_k,return_scores=True)
+    results=[]; context=[]
+    for row,score in selected:
+        import re
+        m=re.search(r"\[Page (\d+)\]",row["chunk_text"])
+        snippet=re.sub(r"\[Page \d+\]","",row["chunk_text"]).strip()
+        results.append({"filename":row["filename"],"chunk_index":row.get("chunk_index"),"page":int(m.group(1)) if m else None,"score":round(max(0,min(1,score))*100),"snippet":snippet[:360]})
+        context.append(f"[{len(context)+1}] ({row['filename']})\n{row['chunk_text'][:900]}")
+    return jsonify({"question":question,"results":results,"context":"\n\n---\n\n".join(context)})
+
+@app.route("/api/evaluation", methods=["GET"])
+@login_required
+def api_evaluation():
+    # Read-only status endpoint. It never invents scores.
+    return jsonify({"available":False,"summary":None,"results":[]})
+
+@app.route("/api/evaluation/run", methods=["POST"])
+@login_required
+def api_evaluation_run():
+    dataset_path=os.path.join(os.path.dirname(__file__),"eval_dataset.json")
+    if not os.path.exists(dataset_path): return jsonify({"error":"eval_dataset.json not found"}),404
+    try:
+        dataset=evaluation.load_dataset(dataset_path)
+        results=evaluation.evaluate_retrieval(session["user_id"],dataset)
+        scored=[r for r in results if r["hit"] is not None]
+        hit=round(sum(1 for r in scored if r["hit"])/len(scored)*100,1) if scored else None
+        precisions=[r["precision"] for r in scored if r["precision"] is not None]
+        precision=round(sum(precisions)/len(precisions)*100,1) if precisions else None
+        mrr=round(sum(r["reciprocal_rank"] for r in scored)/len(scored),3) if scored else None
+        avg=round(sum(r["match_percent"] for r in results)/len(results),1) if results else 0
+        return jsonify({"summary":{"hit_rate":hit,"precision":precision,"mrr":mrr,"avg_match":avg},"results":results})
+    except SystemExit:
+        return jsonify({"error":"Upload at least one document and configure eval_dataset.json with real ground truth."}),400
+    except Exception as exc:
+        return jsonify({"error":str(exc)}),400
+
 # ---------------- Chat ----------------
 def _answer_for_conversation(conv_id, user_id, user_message):
     history = db.list_messages(conv_id)
@@ -348,6 +414,8 @@ def _answer_for_conversation(conv_id, user_id, user_message):
         best_score = selected[0][1]
         match_percent = max(0, min(99, round(best_score * 150)))
         citations = rag_engine.build_citations(selected)
+        for citation, (row, _score) in zip(citations, selected):
+            citation["chunk_index"] = row.get("chunk_index")
 
     started = time.perf_counter()
     result = rag_engine.generate_answer(history, user_message[:2000], doc_context)

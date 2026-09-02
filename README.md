@@ -21,3 +21,29 @@ Groq rate limits are organization-level. A code change cannot raise an 8K TPM ac
 
 ## Production note
 Use persistent storage for `DB_PATH` and `UPLOAD_DIR` on hosted platforms.
+
+## RAGORA Final-Year Project Edition
+
+RAGORA is a Flask-based Retrieval-Augmented Question & Answer platform with a premium dark-first UI and a transparent technical demonstration layer.
+
+### What is included
+- Document ingestion for PDF, DOCX, TXT, CSV, XLSX and source/code formats
+- Text extraction and chunking with overlap
+- Hybrid retrieval: TF-IDF similarity + BM25 + keyword overlap + reciprocal-rank fusion + reranking
+- Grounded LLM answers with numbered source citations
+- Source Viewer and Chunk Explorer
+- Retrieval Explorer showing query → retrieval → Top-K → context → LLM flow
+- Analytics & Evaluation using `eval_dataset.json` with Hit Rate@K, Precision@K, MRR and average retrieval confidence
+- Chat history, export, responsive mobile navigation and theme toggle
+- Google OAuth and existing Groq/Compound web-search integration preserved
+
+### Honest evaluation
+The Analytics screen does not invent scores. Until you run an evaluation against a real `eval_dataset.json` and indexed documents, metrics are shown as unavailable. The starter dataset should be edited with the actual filenames that are relevant to your project questions.
+
+### Run locally
+1. Create a virtual environment and install `requirements.txt`.
+2. Copy `.env.example` to `.env` and add your own credentials.
+3. Run `python app.py`.
+4. Open the local Flask URL shown in the terminal.
+
+Never commit your real `.env` or API credentials.
