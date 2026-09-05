@@ -37,14 +37,14 @@ GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 _STATE_TTL_SECONDS = 600
-_pending_states = {}
 
 
 def _cleanup_expired_states():
-    now = time.time()
-    for state, created in list(_pending_states.items()):
-        if now - created > _STATE_TTL_SECONDS:
-            _pending_states.pop(state, None)
+    # OAuth state is stored in the signed Flask session below, not in a
+    # process-local dictionary. This is important on Vercel/serverless where
+    # the /auth/google and /auth/google/callback requests may hit different
+    # function instances.
+    return
 
 
 def login_required(f):
@@ -81,7 +81,8 @@ def auth_google():
 
     _cleanup_expired_states()
     state = secrets.token_urlsafe(32)
-    _pending_states[state] = time.time()
+    session["oauth_state"] = state
+    session["oauth_state_created"] = int(time.time())
 
     params = {
         "client_id": Config.GOOGLE_CLIENT_ID,
@@ -109,12 +110,19 @@ def auth_callback():
 
     state = request.args.get("state")
     code = request.args.get("code")
-    if not state or state not in _pending_states:
+    saved_state = session.pop("oauth_state", None)
+    state_created = session.pop("oauth_state_created", 0)
+    if (
+        not state
+        or not saved_state
+        or state != saved_state
+        or not state_created
+        or time.time() - state_created > _STATE_TTL_SECONDS
+    ):
         return render_template(
             "login.html",
             error="Google login expired. Please click Sign in with Google again.",
         ), 400
-    _pending_states.pop(state, None)
 
     if not code:
         return render_template(
