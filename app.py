@@ -552,5 +552,5 @@ if __name__ == "__main__":
         debug=os.getenv("FLASK_DEBUG", "0") == "1",
         use_reloader=False,
         host="0.0.0.0",
-        port=int(os.getenv("PORT", "5000")),
+        port=int((os.getenv("PORT") or "5000").strip() or "5000"),
     )
