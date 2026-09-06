@@ -11,6 +11,7 @@ from flask import (
 )
 from werkzeug.utils import secure_filename
 from werkzeug.middleware.proxy_fix import ProxyFix
+from itsdangerous import URLSafeTimedSerializer, BadSignature, BadTimeSignature
 
 from config import Config
 import db
@@ -18,16 +19,22 @@ import rag_engine
 
 app = Flask(__name__)
 # Trust the reverse proxy used by production hosts so HTTPS redirects/callbacks work.
-if os.getenv("PRODUCTION", "0") == "1":
+_production = os.getenv("PRODUCTION", "0").strip().lower() in {"1", "true", "yes", "on"}
+_hosted = bool(os.getenv("VERCEL")) or bool(os.getenv("RENDER"))
+if _production or _hosted:
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.config.from_object(Config)
 app.secret_key = Config.SECRET_KEY
-if os.getenv("PRODUCTION", "0") == "1" and Config.SECRET_KEY == "change-me-in-production":
+if (_production or _hosted) and Config.SECRET_KEY == "change-me-in-production":
     raise RuntimeError("SECRET_KEY must be set in production.")
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=os.getenv("COOKIE_SECURE", "0") == "1",
+    SESSION_COOKIE_SECURE=(
+        os.getenv("COOKIE_SECURE", "").strip().lower() in {"1", "true", "yes", "on"}
+        if os.getenv("COOKIE_SECURE") is not None
+        else (_production or _hosted)
+    ),
     PERMANENT_SESSION_LIFETIME=3600,
 )
 os.makedirs(Config.UPLOAD_DIR, exist_ok=True)
@@ -37,13 +44,17 @@ GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 _STATE_TTL_SECONDS = 600
+_STATE_SALT = "ragora-google-oauth-state-v2"
+
+
+def _state_serializer():
+    # Keep OAuth state completely serverless-safe: the state is cryptographically
+    # signed with SECRET_KEY, so the callback does not depend on a session cookie
+    # surviving across Vercel function instances.
+    return URLSafeTimedSerializer(Config.SECRET_KEY, salt=_STATE_SALT)
 
 
 def _cleanup_expired_states():
-    # OAuth state is stored in the signed Flask session below, not in a
-    # process-local dictionary. This is important on Vercel/serverless where
-    # the /auth/google and /auth/google/callback requests may hit different
-    # function instances.
     return
 
 
@@ -80,9 +91,8 @@ def auth_google():
         ), 500
 
     _cleanup_expired_states()
-    state = secrets.token_urlsafe(32)
-    session["oauth_state"] = state
-    session["oauth_state_created"] = int(time.time())
+    nonce = secrets.token_urlsafe(32)
+    state = _state_serializer().dumps({"nonce": nonce})
 
     params = {
         "client_id": Config.GOOGLE_CLIENT_ID,
@@ -110,15 +120,15 @@ def auth_callback():
 
     state = request.args.get("state")
     code = request.args.get("code")
-    saved_state = session.pop("oauth_state", None)
-    state_created = session.pop("oauth_state_created", 0)
-    if (
-        not state
-        or not saved_state
-        or state != saved_state
-        or not state_created
-        or time.time() - state_created > _STATE_TTL_SECONDS
-    ):
+    if not state:
+        return render_template(
+            "login.html",
+            error="Google login expired. Please click Sign in with Google again.",
+        ), 400
+
+    try:
+        _state_serializer().loads(state, max_age=_STATE_TTL_SECONDS)
+    except (BadSignature, BadTimeSignature):
         return render_template(
             "login.html",
             error="Google login expired. Please click Sign in with Google again.",
