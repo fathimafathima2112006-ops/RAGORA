@@ -357,12 +357,11 @@ def web_search(query, max_results=5):
 # ----------------------------------------------------------------------
 # LLM
 # ----------------------------------------------------------------------
-SYSTEM_PROMPT = """You are RAGORA. Answer in the user's Tamil/Tanglish/English style.
-Use DOCUMENT EVIDENCE only when it actually supports the answer. Do not invent document facts.
-The DOCUMENT EVIDENCE is numbered like [1], [2], [3] in the order given. When a sentence you
-write is supported by one of those items, add its bracket number right after it, e.g. "...அப்படி
-irukum [1]." Only cite numbers that were actually given to you. Be concise and direct. If the
-document does not contain the answer, the caller may provide web evidence instead.
+SYSTEM_PROMPT = """You are RAGORA, a helpful AI knowledge assistant. Answer naturally in the user's Tamil/Tanglish/English style.
+For casual conversation (hello, hi, good morning, thank you, how are you, how was your day, small talk), respond warmly and naturally in 1-3 short sentences; do not browse the web for casual chat. You may say you are here to help, but never pretend to be a human.
+For document questions, use DOCUMENT EVIDENCE only when it actually supports the answer. Do not invent document facts.
+The DOCUMENT EVIDENCE is numbered like [1], [2], [3] in the order given. When a sentence you write is supported by one of those items, add its bracket number right after it. Only cite numbers that were actually given to you.
+If the document evidence does not contain the answer, use web research when the question needs outside/current knowledge. Be concise, direct, and useful.
 """
 
 def build_messages(history, user_message, doc_context=None):
@@ -462,6 +461,12 @@ def _normal_answer(history,user_message,doc_context=None,web_context=None,web_so
         if doc_context:return {"answer":_fallback_document_answer(user_message,doc_context),"used_web":False,"sources":[]}
         return {"answer":"The AI service is temporarily unavailable. Please try again shortly.","used_web":bool(web_context),"sources":web_sources or []}
 
+def _is_casual_chat(user_message):
+    text=_normalize(user_message).strip()
+    if not text:return False
+    casual=("hi","hello","hey","hai","good morning","good afternoon","good evening","good night","thank you","thanks","welcome","how are you","how r u","how was your day","what are you doing","enna panra","enna panreenga","eppadi iruka","eppadi irukeenga","saptiya","sapadu aacha","nandri","vanakkam","ஹாய்","வணக்கம்","நன்றி")
+    return text in casual or any(text.startswith(x+" ") for x in casual)
+
 def _needs_web_search(user_message):
     text=_normalize(user_message)
     return any(w in text for w in ("latest","today","now","current","recent","news","weather","price","score","schedule","2026","இன்று","இப்போ","தற்போது","நேற்று","நாளை"))
@@ -469,7 +474,10 @@ def _needs_web_search(user_message):
 def generate_answer(history,user_message,doc_context=None):
     if not Config.LLM_API_KEY:
         return {"answer":"Groq API key configure pannala. .env-la GROQ_API_KEY add pannunga.","used_web":False,"sources":[]}
-    # Current/live questions and weak/no document matches use Compound Mini (70K TPM on free tier).
+    # Casual chat stays conversational and does not trigger web search.
+    if _is_casual_chat(user_message):
+        return _normal_answer(history,user_message,None)
+    # Current/live questions and weak/no document matches use Compound Mini.
     if not doc_context or _needs_web_search(user_message):
         web=_compound_web_answer(user_message,history)
         if web:return web
