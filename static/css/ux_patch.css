@@ -1,0 +1,47 @@
+/* RAGORA UX patch - safe overrides */
+:root{--ease:cubic-bezier(.2,.75,.25,1)}
+body{transition:background-color .35s ease,color .35s ease}
+.app-shell,.sidebar,.workspace,.topbar,.chat-main,.chat-history,.panel,.topic-card,.composer-shell,.upload-strip,.doc-card,.kb-card,.metric-card,.table-wrap{transition:background .3s ease,border-color .3s ease,color .3s ease,box-shadow .3s ease,transform .25s var(--ease)}
+.workspace{min-width:0}.view-host{min-height:0;flex:1;display:flex;flex-direction:column;overflow:hidden}
+.chat-layout{min-height:0;flex:1;display:grid;grid-template-columns:minmax(190px,240px) minmax(0,1fr);overflow:hidden}
+.chat-history{min-width:0;border-right:1px solid var(--line);background:color-mix(in srgb,var(--panel) 82%,transparent);backdrop-filter:blur(22px);padding:14px;overflow:auto}
+.chat-main{min-height:0;position:relative}.messages{min-height:0}
+.welcome{padding:10px 10px 150px}
+.welcome h1{font-size:clamp(34px,4vw,58px);letter-spacing:-.055em;line-height:.98;margin:8px auto 16px;max-width:760px}
+.welcome h1 span{background:linear-gradient(90deg,#7aa7ff,#a27cff,#58e0ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.welcome>p{max-width:680px;margin:0 auto 28px;color:var(--muted);line-height:1.7}
+.welcome-visual{animation:ragoraFloat 5s ease-in-out infinite}
+@keyframes ragoraFloat{50%{transform:translateY(-7px) scale(1.02)}}
+.quick-grid{width:min(100%,760px);margin:0 auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;text-align:left}
+.topic-card{position:relative;min-height:132px;padding:20px;border:1px solid var(--line);border-radius:20px;background:linear-gradient(145deg,color-mix(in srgb,var(--panel2) 94%,transparent),color-mix(in srgb,var(--panel) 75%,transparent));color:var(--text);cursor:pointer;display:flex;flex-direction:column;align-items:flex-start;gap:7px;overflow:hidden;box-shadow:0 16px 50px rgba(0,0,0,.12)}
+.topic-card:before{content:"";position:absolute;inset:-60%;background:radial-gradient(circle,rgba(122,167,255,.14),transparent 48%);opacity:0;transition:opacity .3s}
+.topic-card:hover,.topic-card:focus-visible{transform:translateY(-4px);border-color:rgba(122,167,255,.45);box-shadow:0 22px 65px rgba(65,90,180,.18);outline:none}
+.topic-card:hover:before,.topic-card:focus-visible:before{opacity:1}
+.topic-card b,.topic-card small,.topic-card .topic-icon,.topic-card .topic-arrow{position:relative;z-index:1}
+.topic-card b{font-size:14px}.topic-card small{color:var(--muted);line-height:1.5}
+.topic-icon{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;background:rgba(122,167,255,.12);color:#8eafff;font-size:17px}
+.topic-arrow{position:absolute;right:17px;bottom:15px;color:var(--muted)}
+.welcome-note{margin:20px auto 0;color:var(--muted);font-size:10px}.welcome-note span{color:#67e3a2}
+.composer-area{position:absolute;left:0;right:0;bottom:0;padding:18px 22px 20px;background:linear-gradient(to top,var(--bg) 35%,transparent)}
+.composer-shell{width:min(900px,100%);margin:auto;padding:10px;border:1px solid var(--line2);border-radius:22px;background:color-mix(in srgb,var(--panel2) 88%,transparent);backdrop-filter:blur(24px);box-shadow:0 24px 80px rgba(0,0,0,.22)}
+.composer{display:flex;align-items:flex-end;gap:8px}.composer textarea{flex:1;min-height:46px;max-height:180px;border:0;outline:0;background:transparent;color:var(--text);resize:none;padding:12px 6px}
+.attach-btn,.send-btn{width:44px;height:44px;flex:0 0 44px;border:1px solid var(--line);border-radius:14px;display:grid;place-items:center;cursor:pointer;transition:.2s}
+.attach-btn{background:transparent;color:var(--muted)}.send-btn{background:linear-gradient(135deg,#77a8ff,#8e72ff);color:white;box-shadow:0 8px 24px rgba(100,110,255,.28)}
+.attach-btn:hover,.send-btn:hover{transform:translateY(-2px)}
+.composer-meta{display:flex;justify-content:space-between;gap:10px;padding:4px 5px 0;color:var(--muted);font-size:9px}
+.modal-backdrop{position:fixed!important;inset:0!important;z-index:9999!important;background:rgba(2,4,10,.62);backdrop-filter:blur(14px);display:grid;place-items:center;padding:20px;animation:fadeIn .2s ease}
+.modal{width:min(900px,100%);max-height:min(82vh,760px);overflow:auto;border:1px solid var(--line2);border-radius:24px;background:var(--panel2);color:var(--text);box-shadow:0 35px 120px rgba(0,0,0,.45);padding:26px;position:relative}
+.highlight{white-space:pre-wrap;line-height:1.7;color:var(--text);background:var(--hover);border:1px solid var(--line);border-radius:16px;padding:18px;margin:18px 0;max-height:55vh;overflow:auto}
+.modal-close{position:absolute;right:16px;top:14px;border:0;background:var(--hover);color:var(--text);width:34px;height:34px;border-radius:10px;cursor:pointer}
+.source-meta{display:flex;flex-wrap:wrap;gap:8px}.source-meta span{border:1px solid var(--line);padding:6px 9px;border-radius:999px;color:var(--muted);font-size:10px}
+.sidebar-overlay{z-index:1000}.sidebar{z-index:1001}
+body.theme-light .topbar{background:rgba(255,255,255,.76)}body.theme-light .sidebar{background:rgba(255,255,255,.86)}
+body.theme-light .topic-card{box-shadow:0 14px 45px rgba(30,40,70,.08)}body.theme-light .composer-shell{box-shadow:0 20px 60px rgba(30,40,70,.12)}
+@keyframes fadeIn{from{opacity:0;transform:scale(.98)}to{opacity:1;transform:none}}
+@media(max-width:900px){
+.sidebar{position:fixed;left:0;top:0;bottom:0;height:100%;transform:translateX(-105%);transition:transform .28s var(--ease);box-shadow:30px 0 90px rgba(0,0,0,.35)}
+.sidebar.open{transform:translateX(0)}.sidebar-overlay{position:fixed;inset:0;background:rgba(0,0,0,.42);backdrop-filter:blur(8px);opacity:0;visibility:hidden;transition:.25s;z-index:1000}
+.sidebar-overlay.show{opacity:1;visibility:visible}.chat-layout{grid-template-columns:1fr}.chat-history{display:none}.topbar{padding:0 12px}.quick-grid{grid-template-columns:1fr}
+.welcome{margin-top:2vh}.welcome h1{font-size:clamp(30px,9vw,44px)}.composer-area{padding:10px 10px 12px}.composer-meta{display:none}.messages{padding:24px 12px 120px}
+}
+@media(max-width:520px){.topic-card{min-height:116px;padding:16px}.topic-card small{font-size:10px}.composer-shell{border-radius:18px}.welcome{padding-bottom:120px}.top-actions .status-pill{display:none}}
