@@ -23,6 +23,7 @@ _MODEL_CACHE = {"model": "openai/gpt-oss-20b", "expires": 0.0}
 # and stale .env values were previously overriding the intended 20B model.
 _PRIMARY_MODEL = "openai/gpt-oss-20b"
 _WEB_MODEL = "groq/compound-mini"
+_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 _BLOCKED_MODELS = {"openai/gpt-oss-120b", "llama-3.1-8b-instant"}
 
 def _resolve_llm_model(force_refresh=False):
@@ -357,23 +358,67 @@ def web_search(query, max_results=5):
 # ----------------------------------------------------------------------
 # LLM
 # ----------------------------------------------------------------------
-SYSTEM_PROMPT = """You are RAGORA, a helpful AI knowledge assistant. Answer naturally in the user's Tamil/Tanglish/English style.
-For casual conversation (hello, hi, good morning, thank you, how are you, how was your day, small talk), respond warmly and naturally in 1-3 short sentences; do not browse the web for casual chat. You may say you are here to help, but never pretend to be a human.
-For document questions, use DOCUMENT EVIDENCE only when it actually supports the answer. Do not invent document facts.
-The DOCUMENT EVIDENCE is numbered like [1], [2], [3] in the order given. When a sentence you write is supported by one of those items, add its bracket number right after it. Only cite numbers that were actually given to you.
-If the document evidence does not contain the answer, use web research when the question needs outside/current knowledge. Be concise, direct, and useful.
+SYSTEM_PROMPT = """You are RAGORA, a high-quality multilingual AI knowledge assistant.
+
+CORE BEHAVIOR
+- Answer the user's actual question first. Do not wander.
+- Then, when the question involves learning, a task, a process, code, science, business, or a calculation, add a compact "How it works" or "Steps" section so the user understands how the answer was reached.
+- Match the user's language, script, and tone. Support multilingual and Tanglish conversations naturally.
+- Never invent facts, citations, document contents, calculations, or image contents.
+- If information is uncertain, say what is uncertain and explain what would resolve it.
+- For document questions, use DOCUMENT EVIDENCE only when it supports the answer. Cite the numbered evidence like [1], [2] immediately after supported claims.
+- If current/outside knowledge is needed and web evidence is supplied, use it. Do not pretend web evidence is a document source.
+
+MATH
+- Treat arithmetic, algebra, equations, percentages, units, statistics, calculus, and word problems carefully.
+- Show the key calculation/steps, not just the final number.
+- Preserve exact values when possible and label approximations.
+- Double-check signs, units, parentheses, and rounding.
+
+DIAGRAMS
+- If the user asks for a diagram, flowchart, architecture, process, mind map, sequence, hierarchy, or visual explanation, provide a concise explanation AND a Mermaid diagram in a ```mermaid``` block.
+- Make the diagram reflect the actual answer; do not invent unsupported relationships.
+
+IMAGES
+- When an image is attached, inspect the visible content and answer the question about it. If text is unreadable, say so rather than guessing.
+- For diagrams/charts in images, explain the visual structure and key values when readable.
+
+STYLE
+- Prefer a direct answer followed by useful detail.
+- For complex tasks use headings, numbered steps, bullets, examples, and formulas.
+- Keep casual chat short and natural.
+- Never claim to be human.
 """
 
-def build_messages(history, user_message, doc_context=None):
-    # Keep the entire request intentionally tiny. This is critical for the 8K TPM org limit.
-    messages = [{"role":"system","content":SYSTEM_PROMPT}]
+def build_messages(history, user_message, doc_context=None, preferred_language="auto", image_data=None, mode="auto", memory_context=None):
+    language_instruction = "Detect the user language automatically and reply in that language." if preferred_language in (None, "", "auto") else f"Reply primarily in {preferred_language}. If the user explicitly asks for another language, follow the user."
+    mode_instructions = {
+        "auto": "Choose the best response style automatically.",
+        "fast": "Be concise and direct. Give the answer first and only the most useful steps.",
+        "research": "Act like a careful research assistant. Prefer current evidence when needed, distinguish facts from uncertainty, and finish with a concise Sources/Research notes section when web evidence is available.",
+        "study": "Act like a patient tutor. Explain the concept step by step, use a small example when useful, and end with 2-3 quick practice questions or a check-for-understanding prompt.",
+        "code": "Act like a senior coding mentor. Explain the cause, provide corrected code when needed, mention edge cases, and keep code blocks complete and runnable.",
+        "explain": "Teach the topic clearly from simple to advanced. Define unfamiliar terms and use examples or analogies.",
+        "agent": "Act like a task-oriented AI agent. Break complex requests into a short plan, execute the reasoning in a useful order, verify important claims, and present the finished result with clear next actions.",
+    }
+    mode_instruction = mode_instructions.get((mode or "auto").lower(), mode_instructions["auto"])
+    system = SYSTEM_PROMPT + "\nLANGUAGE PREFERENCE: " + language_instruction + "\nMODE: " + mode_instruction
+    if memory_context:
+        system += "\nUSER PREFERENCES / MEMORY (user-provided; use only when relevant):\n" + str(memory_context)[:1200]
+    messages = [{"role":"system","content":system}]
     for m in history[-2:]:
-        c=(m.get("content") or "").strip()[:180]
+        c=(m.get("content") or "").strip()[:260]
         if c:
             messages.append({"role":"assistant" if m.get("role")=="assistant" else "user","content":c})
     if doc_context:
         messages.append({"role":"system","content":"DOCUMENT EVIDENCE:\n"+doc_context[:1800]})
-    messages.append({"role":"user","content":(user_message or "")[:700]})
+    if image_data:
+        messages.append({"role":"user","content":[
+            {"type":"text","text":(user_message or "Analyze this image and answer the question.")[:900]},
+            {"type":"image_url","image_url":{"url":image_data}}
+        ]})
+    else:
+        messages.append({"role":"user","content":(user_message or "")[:900]})
     return messages
 
 def _groq_request(messages, model=None, max_tokens=180, compound=False):
@@ -410,8 +455,10 @@ def _extract_compound_sources(message):
         if x["url"] not in seen: seen.add(x["url"]); out.append(x)
     return out[:6]
 
-def _compound_web_answer(user_message, history):
-    messages=[{"role":"user","content":f"Answer this using live web search when needed. Be concise and answer in the user's language.\nQuestion: {(user_message or '')[:700]}"}]
+def _compound_web_answer(user_message, history, preferred_language="auto", mode="research"):
+    language = "the user's language" if preferred_language in (None, "", "auto") else preferred_language
+    mode_hint = "Do a careful research-style answer with current sources and clearly separated evidence." if mode in ("research", "agent") else "Answer using live web search when needed."
+    messages=[{"role":"user","content":f"{mode_hint} Be accurate, helpful, and answer in {language}. Preserve technical details.\nQuestion: {(user_message or '')[:700]}"}]
     try:
         resp=_groq_request(messages,_WEB_MODEL,max_tokens=0,compound=True)
         if resp.ok:
@@ -443,11 +490,11 @@ def _fallback_document_answer(user_message, doc_context):
     if not parts:return "I couldn't generate the AI answer right now, but no document evidence matched this question."
     return "Based on the uploaded document:\n\n"+parts[0][:1200]
 
-def _normal_answer(history,user_message,doc_context=None,web_context=None,web_sources=None):
-    messages=build_messages(history,user_message,doc_context)
+def _normal_answer(history,user_message,doc_context=None,web_context=None,web_sources=None,preferred_language="auto",image_data=None,mode="auto",memory_context=None):
+    messages=build_messages(history,user_message,doc_context,preferred_language,image_data=image_data,mode=mode,memory_context=memory_context)
     if web_context: messages.insert(-1,{"role":"system","content":"WEB EVIDENCE:\n"+web_context[:1800]})
     try:
-        resp=_groq_request(messages,_resolve_llm_model(),max_tokens=180,compound=False)
+        resp=_groq_request(messages,(_VISION_MODEL if image_data else _resolve_llm_model()),max_tokens=420 if image_data else 260,compound=False)
         if resp.ok:
             msg=((resp.json().get("choices") or [{}])[0].get("message") or {})
             answer=(msg.get("content") or "").strip()
@@ -460,6 +507,9 @@ def _normal_answer(history,user_message,doc_context=None,web_context=None,web_so
     except requests.RequestException:
         if doc_context:return {"answer":_fallback_document_answer(user_message,doc_context),"used_web":False,"sources":[]}
         return {"answer":"The AI service is temporarily unavailable. Please try again shortly.","used_web":bool(web_context),"sources":web_sources or []}
+    except Exception:
+        if doc_context:return {"answer":_fallback_document_answer(user_message,doc_context),"used_web":False,"sources":[]}
+        return {"answer":"RAGORA could not complete the AI request right now. Please check the AI provider configuration and try again.","used_web":bool(web_context),"sources":web_sources or []}
 
 def _is_casual_chat(user_message):
     text=_normalize(user_message).strip()
@@ -471,21 +521,22 @@ def _needs_web_search(user_message):
     text=_normalize(user_message)
     return any(w in text for w in ("latest","today","now","current","recent","news","weather","price","score","schedule","2026","இன்று","இப்போ","தற்போது","நேற்று","நாளை"))
 
-def generate_answer(history,user_message,doc_context=None):
+def generate_answer(history,user_message,doc_context=None,preferred_language="auto",image_data=None,mode="auto",memory_context=None):
     if not Config.LLM_API_KEY:
         return {"answer":"Groq API key configure pannala. .env-la GROQ_API_KEY add pannunga.","used_web":False,"sources":[]}
+    mode=(mode or "auto").lower()
     # Casual chat stays conversational and does not trigger web search.
-    if _is_casual_chat(user_message):
-        return _normal_answer(history,user_message,None)
-    # Current/live questions and weak/no document matches use Compound Mini.
-    if not doc_context or _needs_web_search(user_message):
-        web=_compound_web_answer(user_message,history)
+    if _is_casual_chat(user_message) and mode == "auto" and not image_data:
+        return _normal_answer(history,user_message,None,preferred_language=preferred_language,image_data=None,mode=mode,memory_context=memory_context)
+    # Research/agent modes intentionally prefer the live-web path.
+    if mode in ("research", "agent") or not doc_context or _needs_web_search(user_message):
+        web=_compound_web_answer(user_message,history,preferred_language,mode=mode)
         if web:return web
         web_context,sources=_duckduckgo_web_context(user_message)
         if web_context:
-            return _normal_answer(history,user_message,None,web_context,sources)
-        return _normal_answer(history,user_message,None)
-    return _normal_answer(history,user_message,doc_context)
+            return _normal_answer(history,user_message,doc_context if mode=="agent" else None,web_context,sources,preferred_language,image_data=image_data,mode=mode,memory_context=memory_context)
+        return _normal_answer(history,user_message,doc_context,preferred_language=preferred_language,image_data=image_data,mode=mode,memory_context=memory_context)
+    return _normal_answer(history,user_message,doc_context,preferred_language=preferred_language,image_data=image_data,mode=mode,memory_context=memory_context)
 
 def generate_title(first_message):
     text=(first_message or "").strip().replace("\n"," ")

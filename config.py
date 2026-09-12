@@ -82,7 +82,7 @@ class Config:
         DB_PATH = _env_text("DB_PATH", os.path.join(BASE_DIR, "instance", "ragora.db"))
         UPLOAD_DIR = _env_text("UPLOAD_DIR", os.path.join(BASE_DIR, "uploads"))
 
-    MAX_CONTENT_LENGTH = 25 * 1024 * 1024
+    MAX_CONTENT_LENGTH = 1024 * 1024 * 1024
     ALLOWED_EXTENSIONS = {
         "pdf", "docx", "txt", "md", "csv", "xlsx", "json",
         "py", "js", "ts", "java", "c", "cpp", "html", "css", "sql"
