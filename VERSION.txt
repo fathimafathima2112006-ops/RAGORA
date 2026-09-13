@@ -1,2 +1,2 @@
-RAGORA Professional 2.0 - Groq Safe RAG/Web Routing
-Build: 2026-09-01
+RAGORA SUPER AI 2.1 PRO — 2026-09-14
+Retrieval Lab redesign + multilingual mixed-script voice + vision model fix + conditional sources
