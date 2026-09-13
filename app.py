@@ -478,8 +478,8 @@ def api_chat():
         app.logger.exception("RAGORA chat failure")
         result = {
             "answer": (
-                "RAGORA could not reach the AI service right now. "
-                "Please check the LLM/API configuration and try again."
+                "RAGORA AI service-la temporary issue vandhirukku. "
+                "API key / model configuration check pannitu retry pannunga."
             ),
             "used_web": False,
             "sources": [],
@@ -488,12 +488,18 @@ def api_chat():
             "elapsed_ms": 0,
             "knowledge_docs": 0,
             "knowledge_chunks": 0,
+            "provider_error": type(exc).__name__,
         }
-    db.add_message(conv_id, "user", message)
-    db.add_message(conv_id, "assistant", result["answer"], used_web=int(result["used_web"]))
-
-    if conv["title"] == "New Chat":
-        db.rename_conversation(conv_id, rag_engine.generate_title(message))
+    # Saving chat history must never turn a successful AI answer into a 500.
+    # Vercel/serverless storage can be ephemeral, so history persistence is
+    # treated as best-effort while the answer remains usable.
+    try:
+        db.add_message(conv_id, "user", message)
+        db.add_message(conv_id, "assistant", result["answer"], used_web=int(result["used_web"]))
+        if conv["title"] == "New Chat":
+            db.rename_conversation(conv_id, rag_engine.generate_title(message))
+    except Exception:
+        app.logger.exception("RAGORA chat history save failure")
 
     return jsonify({
         "answer": result["answer"],

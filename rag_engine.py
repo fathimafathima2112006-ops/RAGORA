@@ -446,13 +446,40 @@ def build_messages(history, user_message, doc_context=None, preferred_language="
         messages.append({"role":"user","content":(user_message or "")[:900]})
     return messages
 
+def _reasoning_effort_for_model(model):
+    # Groq's Qwen 3.6 only accepts none/default reasoning; GPT-OSS accepts
+    # low/medium/high. Sending an unsupported value causes a 400 and was one
+    # of the easiest ways for RAGORA to fall into the generic chat error.
+    model = (model or "").lower()
+    if model.startswith("qwen/qwen3.6"):
+        return "none"
+    if model.startswith("qwen/qwen3.8"):
+        return "low"
+    if model.startswith("openai/gpt-oss"):
+        return "low"
+    return None
+
 def _groq_request(messages, model=None, max_tokens=180, compound=False):
     model = model or (_WEB_MODEL if compound else _resolve_llm_model())
     payload = {"model": model, "messages": messages, "stream": False}
     if not compound:
-        payload.update({"temperature":0.2,"max_completion_tokens":max_tokens,"reasoning_effort":"low"})
+        payload.update({"temperature":0.2,"max_completion_tokens":max_tokens})
+        effort = _reasoning_effort_for_model(model)
+        if effort:
+            payload["reasoning_effort"] = effort
+        if model.startswith("openai/gpt-oss"):
+            payload["include_reasoning"] = False
     headers={"Authorization":f"Bearer {Config.LLM_API_KEY}","Content-Type":"application/json"}
-    return requests.post(Config.GROQ_BASE_URL.rstrip("/")+"/chat/completions",headers=headers,json=payload,timeout=Config.LLM_TIMEOUT)
+    url=Config.GROQ_BASE_URL.rstrip("/")+"/chat/completions"
+    resp=requests.post(url,headers=headers,json=payload,timeout=Config.LLM_TIMEOUT)
+    # If an account/model rejects an optional reasoning parameter, retry once
+    # with the minimal OpenAI-compatible payload. This keeps provider changes
+    # from surfacing as a generic 'unexpected problem' in the UI.
+    if resp.status_code == 400 and not compound and ("reasoning" in (resp.text or "").lower() or "include_reasoning" in (resp.text or "").lower()):
+        payload.pop("reasoning_effort",None)
+        payload.pop("include_reasoning",None)
+        resp=requests.post(url,headers=headers,json=payload,timeout=Config.LLM_TIMEOUT)
+    return resp
 
 def _error_detail(resp):
     try:
@@ -528,13 +555,20 @@ def _normal_answer(history,user_message,doc_context=None,web_context=None,web_so
         if _rate_limited(resp) or resp.status_code in (413,500,502,503,504):
             if doc_context:return {"answer":_fallback_document_answer(user_message,doc_context),"used_web":False,"sources":[]}
             if web_context:return {"answer":"Web search found these results, but the AI summary limit is temporarily busy.\n\n"+web_context[:1400],"used_web":True,"sources":web_sources or []}
-        return {"answer":"I couldn't generate the answer right now. Please try again in a moment.","used_web":bool(web_context),"sources":web_sources or []}
-    except requests.RequestException:
+        detail=_error_detail(resp) if resp is not None else "Unknown provider error"
+        if resp is not None and resp.status_code in (401,403):
+            answer="Groq API authentication failed. Vercel Environment Variables-la GROQ_API_KEY check pannunga."
+        elif resp is not None and resp.status_code in (400,404,422):
+            answer=f"Groq request rejected ({resp.status_code}). {detail[:240]}"
+        else:
+            answer=f"AI provider returned {getattr(resp,'status_code','an error')}. {detail[:240]}"
+        return {"answer":answer,"used_web":bool(web_context),"sources":web_sources or []}
+    except requests.RequestException as exc:
         if doc_context:return {"answer":_fallback_document_answer(user_message,doc_context),"used_web":False,"sources":[]}
-        return {"answer":"The AI service is temporarily unavailable. Please try again shortly.","used_web":bool(web_context),"sources":web_sources or []}
-    except Exception:
+        return {"answer":f"The AI service is temporarily unavailable ({type(exc).__name__}). Please try again shortly.","used_web":bool(web_context),"sources":web_sources or []}
+    except Exception as exc:
         if doc_context:return {"answer":_fallback_document_answer(user_message,doc_context),"used_web":False,"sources":[]}
-        return {"answer":"RAGORA could not complete the AI request right now. Please check the AI provider configuration and try again.","used_web":bool(web_context),"sources":web_sources or []}
+        return {"answer":f"RAGORA could not complete the AI request ({type(exc).__name__}). Please check the AI provider configuration and try again.","used_web":bool(web_context),"sources":web_sources or []}
 
 def _is_casual_chat(user_message):
     text=_normalize(user_message).strip()
@@ -557,8 +591,10 @@ def generate_answer(history,user_message,doc_context=None,preferred_language="au
     # Casual chat stays conversational and does not trigger web search.
     if _is_casual_chat(user_message) and mode == "auto" and not image_data:
         return _normal_answer(history,user_message,None,preferred_language=preferred_language,image_data=None,mode=mode,memory_context=memory_context)
-    # Research/agent modes intentionally prefer the live-web path.
-    if mode in ("research", "agent") or not doc_context or _needs_web_search(user_message):
+    # Web is opt-in for ordinary questions: normal chat should not suddenly
+    # produce source cards. Research/agent modes or clearly time-sensitive
+    # questions can use live web evidence.
+    if mode in ("research", "agent") or _needs_web_search(user_message):
         web=_compound_web_answer(user_message,history,preferred_language,mode=mode)
         if web:return web
         web_context,sources=_duckduckgo_web_context(user_message)
