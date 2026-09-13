@@ -23,7 +23,8 @@ _MODEL_CACHE = {"model": "openai/gpt-oss-20b", "expires": 0.0}
 # and stale .env values were previously overriding the intended 20B model.
 _PRIMARY_MODEL = "openai/gpt-oss-20b"
 _WEB_MODEL = "groq/compound-mini"
-_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+_VISION_MODELS = ("qwen/qwen3.6-27b", "qwen/qwen3.8-27b")
+_VISION_CACHE = {"model": None, "expires": 0.0}
 _BLOCKED_MODELS = {"openai/gpt-oss-120b", "llama-3.1-8b-instant"}
 
 def _resolve_llm_model(force_refresh=False):
@@ -50,6 +51,30 @@ def _resolve_llm_model(force_refresh=False):
         except Exception:
             pass
     _MODEL_CACHE.update({"model": chosen, "expires": now + 300})
+    return chosen
+
+def _resolve_vision_model(force_refresh=False):
+    import time
+    now = time.time()
+    if not force_refresh and _VISION_CACHE["model"] and _VISION_CACHE["expires"] > now:
+        return _VISION_CACHE["model"]
+    chosen = _VISION_MODELS[0]
+    if Config.LLM_API_KEY:
+        try:
+            r = requests.get(
+                Config.GROQ_BASE_URL.rstrip("/") + "/models",
+                headers={"Authorization": f"Bearer {Config.LLM_API_KEY}"},
+                timeout=5,
+            )
+            if r.ok:
+                ids = {str(x.get("id")) for x in (r.json().get("data") or []) if isinstance(x, dict) and x.get("id")}
+                for candidate in _VISION_MODELS:
+                    if candidate in ids:
+                        chosen = candidate
+                        break
+        except Exception:
+            pass
+    _VISION_CACHE.update({"model": chosen, "expires": now + 300})
     return chosen
 
 def _is_compound_model(model=None):
@@ -494,7 +519,7 @@ def _normal_answer(history,user_message,doc_context=None,web_context=None,web_so
     messages=build_messages(history,user_message,doc_context,preferred_language,image_data=image_data,mode=mode,memory_context=memory_context)
     if web_context: messages.insert(-1,{"role":"system","content":"WEB EVIDENCE:\n"+web_context[:1800]})
     try:
-        resp=_groq_request(messages,(_VISION_MODEL if image_data else _resolve_llm_model()),max_tokens=420 if image_data else 260,compound=False)
+        resp=_groq_request(messages,(_resolve_vision_model() if image_data else _resolve_llm_model()),max_tokens=700 if image_data else 320,compound=False)
         if resp.ok:
             msg=((resp.json().get("choices") or [{}])[0].get("message") or {})
             answer=(msg.get("content") or "").strip()
@@ -525,6 +550,10 @@ def generate_answer(history,user_message,doc_context=None,preferred_language="au
     if not Config.LLM_API_KEY:
         return {"answer":"Groq API key configure pannala. .env-la GROQ_API_KEY add pannunga.","used_web":False,"sources":[]}
     mode=(mode or "auto").lower()
+    # Image questions must go directly to a vision-capable model. Do not route
+    # them through the text-only web path, which would otherwise drop the image.
+    if image_data:
+        return _normal_answer(history,user_message,doc_context,preferred_language=preferred_language,image_data=image_data,mode=mode,memory_context=memory_context)
     # Casual chat stays conversational and does not trigger web search.
     if _is_casual_chat(user_message) and mode == "auto" and not image_data:
         return _normal_answer(history,user_message,None,preferred_language=preferred_language,image_data=None,mode=mode,memory_context=memory_context)

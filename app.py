@@ -444,7 +444,7 @@ def _answer_for_conversation(conv_id, user_id, user_message, preferred_language=
     # Only attach document citations when the answer actually used the
     # document path (not the web-search fallback), so citation chips never
     # get shown next to a web-sourced answer.
-    result["citations"] = citations if (citations and not result.get("used_web")) else []
+    result["citations"] = citations if (citations and not result.get("used_web") and any(f"[{c.get('index')}]" in str(result.get("answer") or "") for c in citations)) else []
     return result
 
 
