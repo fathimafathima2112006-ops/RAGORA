@@ -6,13 +6,6 @@ from typing import Optional
 import requests
 from config import Config
 
-try:
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.metrics.pairwise import cosine_similarity
-    SKLEARN_OK = True
-except ImportError:
-    SKLEARN_OK = False
-
 
 # Groq model compatibility (Groq retired Llama 3.1 8B on 2026-08-16).
 # We resolve the active model from the account when possible so stale .env files
@@ -116,29 +109,90 @@ def _extract_pdf(filepath):
 
 
 def _extract_docx(filepath):
-    import docx
-    doc = docx.Document(filepath)
-    parts = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
-    for table_no, table in enumerate(doc.tables, start=1):
+    import zipfile
+    import xml.etree.ElementTree as ET
+
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    with zipfile.ZipFile(filepath) as z:
+        root = ET.fromstring(z.read("word/document.xml"))
+    parts = []
+    for para in root.findall(".//w:body/w:p", ns):
+        text = "".join((node.text or "") for node in para.findall(".//w:t", ns)).strip()
+        if text:
+            parts.append(text)
+    for table_no, table in enumerate(root.findall(".//w:tbl", ns), start=1):
         parts.append(f"[Table {table_no}]")
-        for row in table.rows:
-            parts.append(" | ".join(cell.text.strip() for cell in row.cells))
+        for row in table.findall("./w:tr", ns):
+            cells = []
+            for cell in row.findall("./w:tc", ns):
+                cells.append("".join((node.text or "") for node in cell.findall(".//w:t", ns)).strip())
+            if any(cells):
+                parts.append(" | ".join(cells))
     return "\n".join(parts)
 
 
 def _extract_csv(filepath):
-    import pandas as pd
-    df = pd.read_csv(filepath)
-    return df.to_string(index=False)
+    import csv
+    rows = []
+    with open(filepath, "r", encoding="utf-8-sig", errors="ignore", newline="") as f:
+        for row in csv.reader(f):
+            rows.append(" | ".join(str(x).strip() for x in row))
+    return "\n".join(rows)
 
 
 def _extract_xlsx(filepath):
-    import pandas as pd
-    sheets = pd.read_excel(filepath, sheet_name=None)
-    parts = []
-    for name, df in sheets.items():
-        parts.append(f"[Sheet: {name}]\n{df.to_string(index=False)}")
-    return "\n\n".join(parts)
+    # Minimal XLSX reader using only stdlib ZIP/XML. This avoids pandas/numpy.
+    import zipfile
+    import xml.etree.ElementTree as ET
+
+    main_ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    rel_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    pkg_rel_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
+    with zipfile.ZipFile(filepath) as z:
+        names = set(z.namelist())
+        shared = []
+        if "xl/sharedStrings.xml" in names:
+            root = ET.fromstring(z.read("xl/sharedStrings.xml"))
+            for si in root.findall(f"{{{main_ns}}}si"):
+                shared.append("".join(t.text or "" for t in si.iter(f"{{{main_ns}}}t")))
+
+        workbook = ET.fromstring(z.read("xl/workbook.xml"))
+        rels = ET.fromstring(z.read("xl/_rels/workbook.xml.rels"))
+        rel_map = {}
+        for rel in rels:
+            rid = rel.attrib.get("Id")
+            target = rel.attrib.get("Target", "")
+            if target.startswith("/"):
+                target = target.lstrip("/")
+            elif not target.startswith("xl/"):
+                target = "xl/" + target
+            rel_map[rid] = target
+
+        parts = []
+        for sheet in workbook.findall(f".//{{{main_ns}}}sheet"):
+            name = sheet.attrib.get("name", "Sheet")
+            rid = sheet.attrib.get(f"{{{rel_ns}}}id")
+            target = rel_map.get(rid)
+            if not target or target not in names:
+                continue
+            root = ET.fromstring(z.read(target))
+            rows_out = []
+            for row in root.findall(f".//{{{main_ns}}}sheetData/{{{main_ns}}}row"):
+                vals = []
+                for cell in row.findall(f"{{{main_ns}}}c"):
+                    value = cell.find(f"{{{main_ns}}}v")
+                    val = value.text if value is not None else ""
+                    if cell.attrib.get("t") == "s" and val.isdigit():
+                        idx = int(val)
+                        val = shared[idx] if idx < len(shared) else val
+                    elif cell.attrib.get("t") == "inlineStr":
+                        val = "".join(t.text or "" for t in cell.iter(f"{{{main_ns}}}t"))
+                    vals.append(val)
+                if vals:
+                    rows_out.append(" | ".join(vals))
+            if rows_out:
+                parts.append(f"[Sheet: {name}]\n" + "\n".join(rows_out))
+        return "\n\n".join(parts)
 
 
 def _extract_json(filepath):
@@ -227,20 +281,54 @@ def _minmax(values):
 
 
 def _tfidf_scores(query, texts):
-    """Dense-ish semantic-lexical signal: word n-grams catch meaning/vocabulary
-    overlap, char n-grams catch Tamil/Tanglish spelling variation and typos."""
-    if not (SKLEARN_OK and len(texts) > 1):
-        return [0.0] * len(texts)
-    try:
-        word = TfidfVectorizer(analyzer="word", ngram_range=(1, 2), sublinear_tf=True, max_features=30000)
-        char = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5), sublinear_tf=True, max_features=50000)
-        wm = word.fit_transform(texts + [query])
-        cm = char.fit_transform(texts + [query])
-        ws = cosine_similarity(wm[-1], wm[:-1]).ravel()
-        cs = cosine_similarity(cm[-1], cm[:-1]).ravel()
-        return [0.70 * w + 0.30 * c for w, c in zip(ws, cs)]
-    except ValueError:
-        return [0.0] * len(texts)
+    """Lightweight pure-Python TF-IDF cosine score.
+
+    This intentionally avoids NumPy/SciPy/scikit-learn so the Flask function
+    stays small enough for Vercel's serverless bundle limit. It keeps word and
+    short character signals for English, Tamil and Tanglish retrieval.
+    """
+    import math
+    from collections import Counter
+
+    if not texts:
+        return []
+
+    def features(text):
+        tokens = _tokenize(text)
+        feats = list(tokens)
+        # Character trigrams help with Tamil/Tanglish spelling variation.
+        compact = re.sub(r"\s+", " ", _normalize(text))
+        for i in range(max(0, len(compact) - 2)):
+            gram = compact[i:i + 3]
+            if not gram.isspace() and len(gram.strip()) >= 3:
+                feats.append("#" + gram)
+        return feats
+
+    query_features = Counter(features(query))
+    doc_features = [Counter(features(t)) for t in texts]
+    n_docs = len(texts)
+    df = Counter()
+    for counter in doc_features:
+        for term in counter:
+            df[term] += 1
+
+    def weight(term, tf):
+        idf = math.log((n_docs + 1) / (df.get(term, 0) + 1)) + 1.0
+        return (1.0 + math.log(tf)) * idf
+
+    qvec = {term: weight(term, tf) for term, tf in query_features.items()}
+    qnorm = math.sqrt(sum(v * v for v in qvec.values())) or 1.0
+    scores = []
+    for counter in doc_features:
+        dot = 0.0
+        dnorm_sq = 0.0
+        for term, tf in counter.items():
+            w = weight(term, tf)
+            dnorm_sq += w * w
+            if term in qvec:
+                dot += qvec[term] * w
+        scores.append(dot / (qnorm * (math.sqrt(dnorm_sq) or 1.0)))
+    return scores
 
 
 def _bm25_scores(query, texts, k1=1.5, b=0.75):

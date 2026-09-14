@@ -15,3 +15,11 @@
 - Conditional web/document source cards.
 - AI modes, memory, research, study, code, agent and explain modes.
 - Mobile navigation and image attachment preview.
+
+
+## 2.3 PRO — Vercel Slim Runtime
+- Removed scikit-learn, pandas, openpyxl, sympy and gunicorn from the Vercel dependency set.
+- Added pure-Python TF-IDF retrieval and stdlib CSV/DOCX/XLSX extraction.
+- Added `.vercelignore` to prevent local environments, databases, uploads and archives from entering the deployment bundle.
+- Added a Vercel Python routing config.
+- Keeps the 2.2 AI, vision, voice, source filtering and Retrieval Explorer UX fixes.

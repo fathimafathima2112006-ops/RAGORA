@@ -1,2 +1,2 @@
-RAGORA SUPER AI 2.2 PRO — 2026-09-14
-Production stability + Retrieval Explorer picker + Groq model compatibility
+RAGORA SUPER AI 2.3 PRO — 2026-09-14
+Vercel Slim Runtime + retrieval UI fixes + multilingual voice + vision + conditional sources

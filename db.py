@@ -1,199 +1,351 @@
-"""SQLite persistence layer for the Streamlit RAGORA app."""
-from __future__ import annotations
-
-import hashlib
-import os
-import secrets
 import sqlite3
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Optional
+import os
+from datetime import datetime
+from config import Config
 
-BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_DB = BASE_DIR / "data" / "ragora.db"
-DB_PATH = Path(os.getenv("DB_PATH", str(DEFAULT_DB)))
-DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+os.makedirs(os.path.dirname(Config.DB_PATH), exist_ok=True)
 
 
-def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH), timeout=30)
+def get_db():
+    conn = sqlite3.connect(Config.DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
     return conn
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+def init_db():
+    conn = get_db()
+    cur = conn.cursor()
 
-
-def _hash_password(password: str, salt: bytes | None = None) -> str:
-    salt = salt or secrets.token_bytes(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 210_000)
-    return f"pbkdf2_sha256$210000${salt.hex()}${digest.hex()}"
-
-
-def _verify_password(password: str, stored: str) -> bool:
-    try:
-        algorithm, iterations, salt_hex, digest_hex = stored.split("$", 3)
-        if algorithm != "pbkdf2_sha256":
-            return False
-        candidate = hashlib.pbkdf2_hmac(
-            "sha256",
-            password.encode(),
-            bytes.fromhex(salt_hex),
-            int(iterations),
-        ).hex()
-        return secrets.compare_digest(candidate, digest_hex)
-    except Exception:
-        return False
-
-
-def init_db() -> None:
-    with _connect() as conn:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL UNIQUE,
-                password TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS documents (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                filename TEXT NOT NULL,
-                pages INTEGER NOT NULL DEFAULT 0,
-                uploaded_at TEXT NOT NULL,
-                UNIQUE(user_id, filename),
-                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS chats (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                sources TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL,
-                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_documents_user ON documents(user_id);
-            CREATE INDEX IF NOT EXISTS idx_chats_user ON chats(user_id, id);
-            """
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            google_id TEXT UNIQUE NOT NULL,
+            email TEXT NOT NULL,
+            name TEXT,
+            picture TEXT,
+            created_at TEXT NOT NULL
         )
+    """)
 
-        # Backward-compatible migration for older databases that lacked password.
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
-        if "password" not in columns:
-            conn.execute("ALTER TABLE users ADD COLUMN password TEXT NOT NULL DEFAULT ''")
-
-
-init_db()
-
-
-def create_user(username: str, password: str):
-    username = (username or "").strip()
-    if len(username) < 3:
-        return False, "Username must contain at least 3 characters."
-    if len(username) > 50:
-        return False, "Username is too long."
-    if len(password or "") < 6:
-        return False, "Password must contain at least 6 characters."
-
-    try:
-        with _connect() as conn:
-            conn.execute(
-                "INSERT INTO users(username, password, created_at) VALUES (?, ?, ?)",
-                (username, _hash_password(password), _now()),
-            )
-        return True, "Account created successfully."
-    except sqlite3.IntegrityError:
-        return False, "That username is already in use."
-
-
-def authenticate_user(username: str, password: str):
-    username = (username or "").strip()
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT id, username, password FROM users WHERE username = ?",
-            (username,),
-        ).fetchone()
-
-    if not row or not _verify_password(password or "", row["password"]):
-        return None
-
-    return {"id": row["id"], "username": row["username"]}
-
-
-def add_document(user_id: int, filename: str, pages: int) -> None:
-    with _connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO documents(user_id, filename, pages, uploaded_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(user_id, filename) DO UPDATE SET
-                pages = excluded.pages,
-                uploaded_at = excluded.uploaded_at
-            """,
-            (user_id, filename, int(pages), _now()),
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            title TEXT DEFAULT 'New Chat',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )
+    """)
 
-
-def list_documents(user_id: int):
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT id, filename, pages, uploaded_at FROM documents WHERE user_id = ? ORDER BY id DESC",
-            (user_id,),
-        ).fetchall()
-    return [dict(row) for row in rows]
-
-
-def delete_document(user_id: int, filename: str) -> None:
-    with _connect() as conn:
-        conn.execute(
-            "DELETE FROM documents WHERE user_id = ? AND filename = ?",
-            (user_id, filename),
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            used_web INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
         )
+    """)
 
-
-def save_chat(user_id: int, role: str, content: str, sources: str = "") -> None:
-    with _connect() as conn:
-        conn.execute(
-            "INSERT INTO chats(user_id, role, content, sources, created_at) VALUES (?, ?, ?, ?, ?)",
-            (user_id, role, content, sources or "", _now()),
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            conversation_id INTEGER,
+            filename TEXT NOT NULL,
+            filepath TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
         )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS doc_chunks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id INTEGER NOT NULL,
+            chunk_index INTEGER NOT NULL,
+            chunk_text TEXT NOT NULL,
+            FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+        )
+    """)
+
+    # AI Chat (friendly companion side-panel) — kept fully separate from the
+    # main document-first conversations/messages tables above.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS companion_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    """)
+
+    # Knowledge is user-level, not chat-level. Older versions attached files to a
+    # conversation; detach them once so they survive new-chat creation/deletion.
+    cur.execute("UPDATE documents SET conversation_id = NULL WHERE conversation_id IS NOT NULL")
+
+    conn.commit()
+    conn.close()
 
 
-def list_chats(user_id: int, limit: int = 200):
-    limit = max(1, min(int(limit), 1000))
-    with _connect() as conn:
-        rows = conn.execute(
-            """
-            SELECT role, content, sources, created_at
-            FROM chats
-            WHERE user_id = ?
-            ORDER BY id ASC
-            LIMIT ?
-            """,
-            (user_id, limit),
-        ).fetchall()
-    return [dict(row) for row in rows]
+def now():
+    return datetime.utcnow().isoformat()
 
 
-def clear_chats(user_id: int) -> None:
-    with _connect() as conn:
-        conn.execute("DELETE FROM chats WHERE user_id = ?", (user_id,))
+# ---------- Users ----------
+def get_or_create_user(google_id, email, name, picture):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE google_id = ?", (google_id,))
+    user = cur.fetchone()
+    if user is None:
+        cur.execute(
+            "INSERT INTO users (google_id, email, name, picture, created_at) VALUES (?, ?, ?, ?, ?)",
+            (google_id, email, name, picture, now()),
+        )
+        conn.commit()
+        user_id = cur.lastrowid
+        cur.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+        user = cur.fetchone()
+    else:
+        cur.execute(
+            "UPDATE users SET name = ?, picture = ? WHERE id = ?",
+            (name, picture, user["id"]),
+        )
+        conn.commit()
+    conn.close()
+    return dict(user)
 
 
-def user_stats(user_id: int):
-    with _connect() as conn:
-        docs = conn.execute(
-            "SELECT COUNT(*) FROM documents WHERE user_id = ?", (user_id,)
-        ).fetchone()[0]
-        messages = conn.execute(
-            "SELECT COUNT(*) FROM chats WHERE user_id = ?", (user_id,)
-        ).fetchone()[0]
-    return int(docs), int(messages)
+def get_user(user_id):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+# ---------- Conversations ----------
+def create_conversation(user_id, title="New Chat"):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO conversations (user_id, title, created_at) VALUES (?, ?, ?)",
+        (user_id, title, now()),
+    )
+    conn.commit()
+    conv_id = cur.lastrowid
+    conn.close()
+    return conv_id
+
+
+def list_conversations(user_id):
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM conversations WHERE user_id = ? ORDER BY id DESC", (user_id,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_conversation(conv_id, user_id):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM conversations WHERE id = ? AND user_id = ?", (conv_id, user_id)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def rename_conversation(conv_id, title):
+    conn = get_db()
+    conn.execute("UPDATE conversations SET title = ? WHERE id = ?", (title, conv_id))
+    conn.commit()
+    conn.close()
+
+
+def delete_conversation(conv_id, user_id):
+    conn = get_db()
+    conn.execute(
+        "DELETE FROM conversations WHERE id = ? AND user_id = ?", (conv_id, user_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+# ---------- Messages ----------
+def add_message(conversation_id, role, content, used_web=0):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO messages (conversation_id, role, content, used_web, created_at) VALUES (?, ?, ?, ?, ?)",
+        (conversation_id, role, content, used_web, now()),
+    )
+    conn.commit()
+    msg_id = cur.lastrowid
+    conn.close()
+    return msg_id
+
+
+def list_messages(conversation_id):
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM messages WHERE conversation_id = ? ORDER BY id ASC",
+        (conversation_id,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def delete_last_assistant_message(conversation_id):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT id FROM messages WHERE conversation_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1",
+        (conversation_id,),
+    ).fetchone()
+    if row:
+        conn.execute("DELETE FROM messages WHERE id = ?", (row["id"],))
+        conn.commit()
+    conn.close()
+
+
+# ---------- Documents ----------
+def add_document(user_id, conversation_id, filename, filepath):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO documents (user_id, conversation_id, filename, filepath, created_at) VALUES (?, ?, ?, ?, ?)",
+        (user_id, conversation_id, filename, filepath, now()),
+    )
+    conn.commit()
+    doc_id = cur.lastrowid
+    conn.close()
+    return doc_id
+
+
+def add_chunks(document_id, chunks):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.executemany(
+        "INSERT INTO doc_chunks (document_id, chunk_index, chunk_text) VALUES (?, ?, ?)",
+        [(document_id, i, c) for i, c in enumerate(chunks)],
+    )
+    conn.commit()
+    conn.close()
+
+
+def list_documents(user_id, conversation_id=None):
+    # Documents belong to the user's Knowledge base. conversation_id is accepted
+    # for API compatibility, but intentionally does not filter the collection.
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT d.*, COUNT(dc.id) AS chunk_count
+           FROM documents d LEFT JOIN doc_chunks dc ON dc.document_id=d.id
+           WHERE d.user_id = ? GROUP BY d.id ORDER BY d.id DESC""", (user_id,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_chunks_for_user(user_id):
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT dc.chunk_text, dc.chunk_index, d.filename FROM doc_chunks dc
+           JOIN documents d ON dc.document_id = d.id
+           WHERE d.user_id = ? ORDER BY d.id DESC, dc.chunk_index ASC""",
+        (user_id,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_chunks_for_conversation(conversation_id):
+    # Backward-compatible helper; knowledge is now global per user.
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT dc.chunk_text, dc.chunk_index, d.filename FROM doc_chunks dc
+           JOIN documents d ON dc.document_id = d.id
+           WHERE d.conversation_id = ?""",
+        (conversation_id,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def delete_document(doc_id, user_id):
+    conn = get_db()
+    conn.execute("DELETE FROM documents WHERE id = ? AND user_id = ?", (doc_id, user_id))
+    conn.commit()
+    conn.close()
+
+
+def user_document_stats(user_id):
+    """Total documents + total chunks collected across ALL of a user's chats."""
+    conn = get_db()
+    doc_count = conn.execute(
+        "SELECT COUNT(*) FROM documents WHERE user_id = ?", (user_id,)
+    ).fetchone()[0]
+    chunk_count = conn.execute(
+        """SELECT COUNT(*) FROM doc_chunks dc
+           JOIN documents d ON dc.document_id = d.id
+           WHERE d.user_id = ?""",
+        (user_id,),
+    ).fetchone()[0]
+    conn.close()
+    return {"documents": doc_count, "chunks": chunk_count}
+
+
+# ---------- AI Chat (companion) ----------
+def add_companion_message(user_id, role, content):
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO companion_messages (user_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+        (user_id, role, content, now()),
+    )
+    conn.commit()
+    msg_id = cur.lastrowid
+    conn.close()
+    return msg_id
+
+
+def list_companion_messages(user_id, limit=60):
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM companion_messages WHERE user_id = ? ORDER BY id ASC",
+        (user_id,),
+    ).fetchall()
+    conn.close()
+    rows = [dict(r) for r in rows]
+    return rows[-limit:]
+
+
+def clear_companion_messages(user_id):
+    conn = get_db()
+    conn.execute("DELETE FROM companion_messages WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+# ---------- Product analytics / explorer helpers ----------
+def get_document_chunks(document_id, user_id):
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT dc.id, dc.document_id, dc.chunk_index, dc.chunk_text, d.filename
+        FROM doc_chunks dc JOIN documents d ON dc.document_id=d.id
+        WHERE dc.document_id=? AND d.user_id=? ORDER BY dc.chunk_index ASC
+    """, (document_id, user_id)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def global_stats(user_id):
+    conn=get_db()
+    docs=conn.execute("SELECT COUNT(*) FROM documents WHERE user_id=?",(user_id,)).fetchone()[0]
+    chunks=conn.execute("SELECT COUNT(*) FROM doc_chunks dc JOIN documents d ON dc.document_id=d.id WHERE d.user_id=?",(user_id,)).fetchone()[0]
+    questions=conn.execute("SELECT COUNT(*) FROM messages m JOIN conversations c ON m.conversation_id=c.id WHERE c.user_id=? AND m.role='user'",(user_id,)).fetchone()[0]
+    conn.close()
+    return {"documents":docs,"chunks":chunks,"questions":questions}

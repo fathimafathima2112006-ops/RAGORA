@@ -1,7 +1,5 @@
-"""Authentication helpers for RAGORA.
+"""Google OAuth helpers are kept here for compatibility.
 
-Passwords are stored as salted PBKDF2-HMAC-SHA256 hashes in SQLite.
+RAGORA currently uses a direct, explicit OAuth flow in app.py so the callback
+and redirect URI are easy to debug and do not depend on an OAuth plugin.
 """
-from db import create_user, authenticate_user
-
-__all__ = ["create_user", "authenticate_user"]

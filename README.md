@@ -1,71 +1,26 @@
-# RAGORA — Professional AI Document Assistant
+# RAGORA SUPER AI 2.0
 
-A polished Streamlit Retrieval-Augmented Generation (RAG) workspace for private PDF question answering.
+RAGORA is a multilingual AI knowledge workspace with document RAG, research, study, coding, agent-style task planning, vision input, diagrams, voice playback and mobile-first UX.
 
 ## Features
+- AI modes: Auto, Fast, Research, Study, Code, Explain, Agent
+- PDF/DOCX/TXT/CSV/XLSX/JSON and source-code ingestion
+- Hybrid retrieval: TF-IDF + BM25 + keyword fusion + reranking
+- Traceable document citations and Chunk Explorer
+- Image questions with vision-model support
+- Mermaid diagrams
+- Browser speech playback
+- Local browser-only AI preferences
+- Conversation delete/history/export
+- Google OAuth
 
-- Secure local username/password authentication with salted PBKDF2 hashing
-- Multi-user document isolation
-- PDF upload and page extraction
-- Semantic search with `sentence-transformers`
-- Keyword fallback when embeddings are unavailable
-- Grounded answers through Groq
-- Source filename + page references
-- Persistent SQLite chat history
-- Document management and delete controls
-- Professional dark blue / purple glass UI
-- Render-ready configuration with persistent disk
+## Setup
+1. Copy `.env.example` to `.env`.
+2. Set `SECRET_KEY`, Google OAuth values and `GROQ_API_KEY`.
+3. Install: `pip install -r requirements.txt`
+4. Run: `python app.py`
 
-## 1. Run locally
+Never commit `.env`, API keys, OAuth secrets, database files, uploads or `__pycache__`.
 
-Use Python 3.11 or 3.12.
-
-```powershell
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
-
-Copy `.env.example` to `.env` and add your Groq key.
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Then start:
-
-```powershell
-python -m streamlit run app.py
-```
-
-## 2. GitHub upload
-
-Keep these files/folders in the repository root:
-
-- `app.py`
-- `auth.py`
-- `db.py`
-- `config.py`
-- `requirements.txt`
-- `render.yaml`
-- `.env.example`
-- `.gitignore`
-- `.streamlit/config.toml`
-- `README.md`
-
-Do **not** upload `.env`, your virtual environment, or the local SQLite database.
-
-## 3. Render deployment
-
-Create a Render Web Service from the GitHub repository. The included `render.yaml` starts Streamlit correctly:
-
-```text
-streamlit run app.py --server.address 0.0.0.0 --server.port $PORT --server.headless true
-```
-
-Add `GROQ_API_KEY` as a secret environment variable in Render. The included persistent disk stores the SQLite database and uploaded PDFs.
-
-## Important
-
-This project is a Streamlit application. Do not use `gunicorn app:app` or configure it as a Flask application.
+## Production upload note
+The app-side upload limit is 1 GB, but a serverless host can impose a much smaller request limit. For true 1 GB uploads, use direct object storage and background ingestion.

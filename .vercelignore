@@ -1,0 +1,17 @@
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.log
+*.zip
+.git/
+.gitignore
+node_modules/
+instance/*.db
+uploads/*
+!uploads/.gitkeep
+tests/
+*.sqlite
+*.sqlite3
