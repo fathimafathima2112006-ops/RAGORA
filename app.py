@@ -60,7 +60,7 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # Some earlier versions of the project created data/documents as a file.
 # Use a safe fallback directory instead of crashing with WinError 183.
-DOC_ROOT = DATA_DIR / "documents"
+DOC_ROOT = Path(os.getenv("UPLOAD_DIR", str(DATA_DIR / "documents")))
 if DOC_ROOT.exists() and not DOC_ROOT.is_dir():
     DOC_ROOT = DATA_DIR / "uploaded_documents"
 DOC_ROOT.mkdir(parents=True, exist_ok=True)
