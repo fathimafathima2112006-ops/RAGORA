@@ -468,61 +468,277 @@ button,a,[role="button"]{-webkit-tap-highlight-color:transparent;touch-action:ma
 
 
 /* =========================================================
-   RAGORA — GLOBAL PAGE SCROLL FIX
-   Prevents workspace pages from being trapped by fixed-height
-   containers or overflow:hidden rules.
+   RAGORA FINAL UX PATCH
+   - Full page scrolling
+   - Retrieval Explorer 3 / 5 / 8 chunk picker
+   - Dropdown is never clipped by page containers
+   - Desktop + mobile safe
    ========================================================= */
 
-html,
-body {
+/* ---- Global page scrolling ---- */
+html {
   min-height: 100%;
   height: auto !important;
   overflow-x: hidden !important;
   overflow-y: auto !important;
 }
 
-body {
-  -webkit-overflow-scrolling: touch;
+body.app-page {
+  min-height: 100vh !important;
+  height: auto !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior-y: auto !important;
 }
 
 .app-shell {
-  min-height: 100vh;
+  min-height: 100vh !important;
+  height: auto !important;
+  overflow: visible !important;
+  align-items: stretch;
+}
+
+.workspace {
+  min-width: 0 !important;
+  min-height: 100vh !important;
   height: auto !important;
   overflow: visible !important;
 }
 
-.main-shell,
-.main-content,
-.content-area,
-.workspace,
-.page-content {
+.view-host {
+  min-width: 0 !important;
+  min-height: calc(100vh - 64px) !important;
   height: auto !important;
-  min-height: 100vh;
+  overflow-x: hidden !important;
+  overflow-y: visible !important;
+}
+
+/* Do not let the generic .app-page { overflow:hidden } trap scrolling. */
+.app-page {
   overflow: visible !important;
 }
 
-.retrieval-pro {
-  min-height: 100vh;
-  height: auto !important;
-  overflow: visible !important;
-  padding-bottom: 90px;
+/* Keep the background decorative layer from becoming the scroller. */
+.app-bg {
+  position: fixed !important;
+  inset: 0 !important;
+  pointer-events: none !important;
 }
 
-/* Keep long retrieval content scrollable */
-.context-panel pre {
-  max-height: 330px;
-  overflow: auto !important;
-}
-
-@media (max-width: 768px) {
-  html,
-  body {
+/* Desktop sidebar stays full-height while the main page scrolls. */
+@media (min-width: 901px) {
+  .sidebar {
+    position: sticky !important;
+    top: 0 !important;
+    height: 100vh !important;
+    max-height: 100vh !important;
     overflow-y: auto !important;
-    -webkit-overflow-scrolling: touch;
+    overflow-x: hidden !important;
+    align-self: flex-start !important;
+  }
+}
+
+/* ---- Retrieval Explorer: never clip the picker ---- */
+.retrieval-pro,
+.retrieval-pro > *,
+.retrieval-query-card,
+.retrieval-query-top,
+.retrieval-input-row,
+.retrieval-k,
+.chunk-picker {
+  overflow: visible !important;
+}
+
+.retrieval-query-card {
+  position: relative !important;
+  z-index: 100 !important;
+}
+
+.retrieval-input-row {
+  position: relative !important;
+  z-index: 110 !important;
+}
+
+.retrieval-k {
+  position: relative !important;
+  z-index: 120 !important;
+}
+
+.chunk-picker {
+  position: relative !important;
+  z-index: 999 !important;
+  width: 100%;
+  min-width: 0;
+}
+
+.chunk-picker-btn {
+  position: relative !important;
+  z-index: 1001 !important;
+  width: 100% !important;
+  min-height: 34px !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: #f2f5ff !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 8px !important;
+  padding: 0 2px !important;
+  font: inherit !important;
+  font-weight: 800 !important;
+  cursor: pointer !important;
+}
+
+.chunk-picker-btn span {
+  color: #f2f5ff !important;
+  white-space: nowrap;
+}
+
+.chunk-picker-btn b {
+  color: #aeb8d0 !important;
+  transition: transform .18s ease;
+}
+
+.chunk-picker.open .chunk-picker-btn b {
+  transform: rotate(180deg);
+}
+
+/* The menu itself */
+.chunk-picker-menu {
+  position: absolute !important;
+  top: calc(100% + 8px) !important;
+  right: 0 !important;
+  left: auto !important;
+  z-index: 99999 !important;
+
+  display: none !important;
+  grid-template-columns: 1fr !important;
+  gap: 3px !important;
+
+  min-width: 150px !important;
+  width: max-content !important;
+  max-width: 220px !important;
+
+  margin: 0 !important;
+  padding: 6px !important;
+
+  background: #101625 !important;
+  border: 1px solid rgba(124,140,255,.35) !important;
+  border-radius: 13px !important;
+
+  box-shadow:
+    0 24px 60px rgba(0,0,0,.60),
+    0 0 0 1px rgba(255,255,255,.025) inset !important;
+
+  isolation: isolate !important;
+}
+
+.chunk-picker.open .chunk-picker-menu {
+  display: grid !important;
+}
+
+.chunk-picker-menu button {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+
+  display: flex !important;
+  align-items: center !important;
+
+  width: 100% !important;
+  min-height: 40px !important;
+
+  margin: 0 !important;
+  padding: 9px 12px !important;
+
+  border: 0 !important;
+  border-radius: 9px !important;
+
+  background: transparent !important;
+  color: #eef2ff !important;
+
+  font-family: inherit !important;
+  font-size: 12px !important;
+  font-weight: 750 !important;
+  line-height: 1.2 !important;
+
+  text-align: left !important;
+  white-space: nowrap !important;
+
+  cursor: pointer !important;
+}
+
+.chunk-picker-menu button:hover,
+.chunk-picker-menu button:focus-visible {
+  background: rgba(124,140,255,.18) !important;
+  color: #ffffff !important;
+  outline: none !important;
+}
+
+.chunk-picker-menu button[aria-selected="true"] {
+  background: rgba(124,140,255,.12) !important;
+  color: #bfc7ff !important;
+}
+
+/* Highlight the control while the menu is open. */
+.retrieval-k:has(.chunk-picker.open) {
+  border-color: rgba(124,140,255,.42) !important;
+  box-shadow: 0 0 0 3px rgba(124,140,255,.08) !important;
+}
+
+/* Ensure result cards remain below the picker. */
+#retrievalResult,
+.retrieval-dashboard {
+  position: relative !important;
+  z-index: 1 !important;
+}
+
+/* ---- Mobile ---- */
+@media (max-width: 900px) {
+  .app-shell {
+    min-height: 100dvh !important;
+    height: auto !important;
+  }
+
+  .workspace {
+    min-height: 100dvh !important;
+    height: auto !important;
+  }
+
+  .view-host {
+    min-height: calc(100dvh - 58px) !important;
+    height: auto !important;
+    overflow-x: hidden !important;
+    overflow-y: visible !important;
+    padding-bottom: 100px !important;
   }
 
   .retrieval-pro {
-    min-height: auto;
-    padding-bottom: 110px;
+    min-height: auto !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding-bottom: 100px !important;
   }
+}
+
+@media (max-width: 600px) {
+  .chunk-picker-menu {
+    left: 0 !important;
+    right: auto !important;
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: none !important;
+  }
+
+  .retrieval-query-card,
+  .retrieval-input-row,
+  .retrieval-k {
+    overflow: visible !important;
+  }
+}
+
+/* Keyboard focus */
+.chunk-picker-btn:focus-visible,
+.chunk-picker-menu button:focus-visible {
+  outline: 2px solid rgba(124,140,255,.55) !important;
+  outline-offset: 2px !important;
 }
