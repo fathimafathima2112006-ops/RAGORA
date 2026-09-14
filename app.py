@@ -8,15 +8,28 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from auth import create_user, authenticate_user
-from database import (
-    add_document,
-    list_documents,
-    delete_document,
-    save_chat,
-    list_chats,
-    clear_chats,
-    user_stats,
-)
+# Database compatibility:
+# Your project screenshot shows db.py. Keep compatibility with either filename.
+try:
+    from db import (
+        add_document,
+        list_documents,
+        delete_document,
+        save_chat,
+        list_chats,
+        clear_chats,
+        user_stats,
+    )
+except ImportError:
+    from database import (
+        add_document,
+        list_documents,
+        delete_document,
+        save_chat,
+        list_chats,
+        clear_chats,
+        user_stats,
+    )
 
 try:
     from PyPDF2 import PdfReader
@@ -43,7 +56,13 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+# Some earlier versions of the project created data/documents as a file.
+# Use a safe fallback directory instead of crashing with WinError 183.
 DOC_ROOT = DATA_DIR / "documents"
+if DOC_ROOT.exists() and not DOC_ROOT.is_dir():
+    DOC_ROOT = DATA_DIR / "uploaded_documents"
 DOC_ROOT.mkdir(parents=True, exist_ok=True)
 
 st.set_page_config(
@@ -865,7 +884,7 @@ Document context:
 """
 
     response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+        model=os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
         messages=[
             {
                 "role": "system",
