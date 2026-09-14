@@ -465,3 +465,64 @@ button,a,[role="button"]{-webkit-tap-highlight-color:transparent;touch-action:ma
 .chat-error-card{margin:8px 0;padding:11px 13px;border:1px solid rgba(255,105,125,.22);border-radius:12px;background:rgba(255,82,105,.06);color:#ffb6c1;font-size:12px;line-height:1.5}
 .chat-error-card b{display:block;color:#ffd8de;margin-bottom:3px}
 @media(max-width:600px){.chunk-picker-menu{left:0;right:auto;min-width:100%}}
+
+
+/* =========================================================
+   RAGORA — GLOBAL PAGE SCROLL FIX
+   Prevents workspace pages from being trapped by fixed-height
+   containers or overflow:hidden rules.
+   ========================================================= */
+
+html,
+body {
+  min-height: 100%;
+  height: auto !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+}
+
+body {
+  -webkit-overflow-scrolling: touch;
+}
+
+.app-shell {
+  min-height: 100vh;
+  height: auto !important;
+  overflow: visible !important;
+}
+
+.main-shell,
+.main-content,
+.content-area,
+.workspace,
+.page-content {
+  height: auto !important;
+  min-height: 100vh;
+  overflow: visible !important;
+}
+
+.retrieval-pro {
+  min-height: 100vh;
+  height: auto !important;
+  overflow: visible !important;
+  padding-bottom: 90px;
+}
+
+/* Keep long retrieval content scrollable */
+.context-panel pre {
+  max-height: 330px;
+  overflow: auto !important;
+}
+
+@media (max-width: 768px) {
+  html,
+  body {
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .retrieval-pro {
+    min-height: auto;
+    padding-bottom: 110px;
+  }
+}
