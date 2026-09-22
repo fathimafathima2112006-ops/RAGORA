@@ -391,7 +391,7 @@ def api_evaluation_run():
         return jsonify({"error":str(exc)}),400
 
 # ---------------- Chat ----------------
-def _answer_for_conversation(conv_id, user_id, user_message, preferred_language="auto", image_data=None, mode="auto", memory_context=None):
+def _answer_for_conversation(conv_id, user_id, user_message):
     history = db.list_messages(conv_id)
     rows = db.get_chunks_for_user(user_id)
     selected = rag_engine.retrieve_relevant_chunks(user_message, rows, return_scores=True)
@@ -436,7 +436,13 @@ def _answer_for_conversation(conv_id, user_id, user_message, preferred_language=
             citation["chunk_index"] = row.get("chunk_index")
 
     started = time.perf_counter()
-    result = rag_engine.generate_answer(history, user_message[:2000], doc_context, preferred_language, image_data=image_data, mode=mode, memory_context=memory_context)
+    try:
+        result = rag_engine.generate_answer(history, user_message[:2000], doc_context)
+    except Exception:
+        # Never leak a provider/runtime exception into the chat surface.
+        # The document path can still provide a grounded fallback answer.
+        fallback = rag_engine._fallback_document_answer(user_message, doc_context) if doc_context else "I’m temporarily unable to reach the AI service. Please try again in a moment."
+        result = {"answer": fallback, "used_web": False, "sources": []}
     result["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
     result["match_percent"] = match_percent
     result["knowledge_docs"] = db.user_document_stats(user_id)["documents"]
@@ -444,7 +450,7 @@ def _answer_for_conversation(conv_id, user_id, user_message, preferred_language=
     # Only attach document citations when the answer actually used the
     # document path (not the web-search fallback), so citation chips never
     # get shown next to a web-sourced answer.
-    result["citations"] = citations if (citations and not result.get("used_web") and any(f"[{c.get('index')}]" in str(result.get("answer") or "") for c in citations)) else []
+    result["citations"] = citations if (citations and not result.get("used_web")) else []
     return result
 
 
@@ -460,48 +466,22 @@ def api_chat():
 
     conv = db.get_conversation(conv_id, session["user_id"])
     if not conv:
-        return jsonify({"error": "not_found"}), 404
+        # Recover from stale conversation ids after restarts/deploys instead of
+        # exposing a raw 404 to the chat UI. The frontend also retries once.
+        conv_id = db.create_conversation(session["user_id"])
+        conv = db.get_conversation(conv_id, session["user_id"])
+        if not conv:
+            return jsonify({"error": "conversation_unavailable", "message": "A new chat session could not be opened."}), 503
 
-    preferred_language = (data.get("language") or "auto").strip()[:60]
-    mode = (data.get("mode") or "auto").strip().lower()[:30]
-    if mode not in {"auto","fast","research","study","code","explain","agent"}: mode = "auto"
-    memory_context = (data.get("memory_context") or "").strip()[:1200]
-    image_data = (data.get("image_data") or "").strip()
-    # Keep image requests bounded; the browser compresses photos before sending.
-    if image_data and (not image_data.startswith("data:image/") or len(image_data) > 7_500_000):
-        return jsonify({"error": "Image is too large. Please use a smaller photo."}), 413
-    try:
-        result = _answer_for_conversation(conv_id, session["user_id"], message, preferred_language, image_data=image_data or None, mode=mode, memory_context=memory_context)
-    except Exception as exc:
-        # Keep the chat UI alive even when an upstream LLM/provider request,
-        # malformed provider response, or optional retrieval dependency fails.
-        app.logger.exception("RAGORA chat failure")
-        result = {
-            "answer": (
-                "RAGORA AI service-la temporary issue vandhirukku. "
-                "API key / model configuration check pannitu retry pannunga."
-            ),
-            "used_web": False,
-            "sources": [],
-            "citations": [],
-            "match_percent": 0,
-            "elapsed_ms": 0,
-            "knowledge_docs": 0,
-            "knowledge_chunks": 0,
-            "provider_error": type(exc).__name__,
-        }
-    # Saving chat history must never turn a successful AI answer into a 500.
-    # Vercel/serverless storage can be ephemeral, so history persistence is
-    # treated as best-effort while the answer remains usable.
-    try:
-        db.add_message(conv_id, "user", message)
-        db.add_message(conv_id, "assistant", result["answer"], used_web=int(result["used_web"]))
-        if conv["title"] == "New Chat":
-            db.rename_conversation(conv_id, rag_engine.generate_title(message))
-    except Exception:
-        app.logger.exception("RAGORA chat history save failure")
+    result = _answer_for_conversation(conv_id, session["user_id"], message)
+    db.add_message(conv_id, "user", message)
+    db.add_message(conv_id, "assistant", result["answer"], used_web=int(result["used_web"]))
+
+    if conv["title"] == "New Chat":
+        db.rename_conversation(conv_id, rag_engine.generate_title(message))
 
     return jsonify({
+        "conversation_id": conv_id,
         "answer": result["answer"],
         "used_web": bool(result["used_web"]),
         "sources": result.get("sources", []),
@@ -535,7 +515,7 @@ def api_regenerate():
         return jsonify({"error": "no user message found"}), 400
 
     db.delete_last_assistant_message(conv_id)
-    result = _answer_for_conversation(conv_id, session["user_id"], last_user, (data.get("language") or "auto").strip()[:60], mode=(data.get("mode") or "auto"), memory_context=(data.get("memory_context") or "").strip()[:1200])
+    result = _answer_for_conversation(conv_id, session["user_id"], last_user)
     db.add_message(conv_id, "assistant", result["answer"], used_web=int(result["used_web"]))
     return jsonify({
         "answer": result["answer"],
@@ -594,7 +574,7 @@ def internal_error(_):
 
 @app.errorhandler(413)
 def too_large(_):
-    return jsonify({"error": "File is too large. Maximum size is 1 GB (1024 MiB)."}), 413
+    return jsonify({"error": "File is too large. Maximum size is 25 MB."}), 413
 
 
 if __name__ == "__main__":

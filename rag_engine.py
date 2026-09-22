@@ -6,6 +6,13 @@ from typing import Optional
 import requests
 from config import Config
 
+try:
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity
+    SKLEARN_OK = True
+except ImportError:
+    SKLEARN_OK = False
+
 
 # Groq model compatibility (Groq retired Llama 3.1 8B on 2026-08-16).
 # We resolve the active model from the account when possible so stale .env files
@@ -16,8 +23,6 @@ _MODEL_CACHE = {"model": "openai/gpt-oss-20b", "expires": 0.0}
 # and stale .env values were previously overriding the intended 20B model.
 _PRIMARY_MODEL = "openai/gpt-oss-20b"
 _WEB_MODEL = "groq/compound-mini"
-_VISION_MODELS = ("qwen/qwen3.6-27b", "qwen/qwen3.8-27b")
-_VISION_CACHE = {"model": None, "expires": 0.0}
 _BLOCKED_MODELS = {"openai/gpt-oss-120b", "llama-3.1-8b-instant"}
 
 def _resolve_llm_model(force_refresh=False):
@@ -44,30 +49,6 @@ def _resolve_llm_model(force_refresh=False):
         except Exception:
             pass
     _MODEL_CACHE.update({"model": chosen, "expires": now + 300})
-    return chosen
-
-def _resolve_vision_model(force_refresh=False):
-    import time
-    now = time.time()
-    if not force_refresh and _VISION_CACHE["model"] and _VISION_CACHE["expires"] > now:
-        return _VISION_CACHE["model"]
-    chosen = _VISION_MODELS[0]
-    if Config.LLM_API_KEY:
-        try:
-            r = requests.get(
-                Config.GROQ_BASE_URL.rstrip("/") + "/models",
-                headers={"Authorization": f"Bearer {Config.LLM_API_KEY}"},
-                timeout=5,
-            )
-            if r.ok:
-                ids = {str(x.get("id")) for x in (r.json().get("data") or []) if isinstance(x, dict) and x.get("id")}
-                for candidate in _VISION_MODELS:
-                    if candidate in ids:
-                        chosen = candidate
-                        break
-        except Exception:
-            pass
-    _VISION_CACHE.update({"model": chosen, "expires": now + 300})
     return chosen
 
 def _is_compound_model(model=None):
@@ -109,90 +90,29 @@ def _extract_pdf(filepath):
 
 
 def _extract_docx(filepath):
-    import zipfile
-    import xml.etree.ElementTree as ET
-
-    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
-    with zipfile.ZipFile(filepath) as z:
-        root = ET.fromstring(z.read("word/document.xml"))
-    parts = []
-    for para in root.findall(".//w:body/w:p", ns):
-        text = "".join((node.text or "") for node in para.findall(".//w:t", ns)).strip()
-        if text:
-            parts.append(text)
-    for table_no, table in enumerate(root.findall(".//w:tbl", ns), start=1):
+    import docx
+    doc = docx.Document(filepath)
+    parts = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+    for table_no, table in enumerate(doc.tables, start=1):
         parts.append(f"[Table {table_no}]")
-        for row in table.findall("./w:tr", ns):
-            cells = []
-            for cell in row.findall("./w:tc", ns):
-                cells.append("".join((node.text or "") for node in cell.findall(".//w:t", ns)).strip())
-            if any(cells):
-                parts.append(" | ".join(cells))
+        for row in table.rows:
+            parts.append(" | ".join(cell.text.strip() for cell in row.cells))
     return "\n".join(parts)
 
 
 def _extract_csv(filepath):
-    import csv
-    rows = []
-    with open(filepath, "r", encoding="utf-8-sig", errors="ignore", newline="") as f:
-        for row in csv.reader(f):
-            rows.append(" | ".join(str(x).strip() for x in row))
-    return "\n".join(rows)
+    import pandas as pd
+    df = pd.read_csv(filepath)
+    return df.to_string(index=False)
 
 
 def _extract_xlsx(filepath):
-    # Minimal XLSX reader using only stdlib ZIP/XML. This avoids pandas/numpy.
-    import zipfile
-    import xml.etree.ElementTree as ET
-
-    main_ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
-    rel_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-    pkg_rel_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
-    with zipfile.ZipFile(filepath) as z:
-        names = set(z.namelist())
-        shared = []
-        if "xl/sharedStrings.xml" in names:
-            root = ET.fromstring(z.read("xl/sharedStrings.xml"))
-            for si in root.findall(f"{{{main_ns}}}si"):
-                shared.append("".join(t.text or "" for t in si.iter(f"{{{main_ns}}}t")))
-
-        workbook = ET.fromstring(z.read("xl/workbook.xml"))
-        rels = ET.fromstring(z.read("xl/_rels/workbook.xml.rels"))
-        rel_map = {}
-        for rel in rels:
-            rid = rel.attrib.get("Id")
-            target = rel.attrib.get("Target", "")
-            if target.startswith("/"):
-                target = target.lstrip("/")
-            elif not target.startswith("xl/"):
-                target = "xl/" + target
-            rel_map[rid] = target
-
-        parts = []
-        for sheet in workbook.findall(f".//{{{main_ns}}}sheet"):
-            name = sheet.attrib.get("name", "Sheet")
-            rid = sheet.attrib.get(f"{{{rel_ns}}}id")
-            target = rel_map.get(rid)
-            if not target or target not in names:
-                continue
-            root = ET.fromstring(z.read(target))
-            rows_out = []
-            for row in root.findall(f".//{{{main_ns}}}sheetData/{{{main_ns}}}row"):
-                vals = []
-                for cell in row.findall(f"{{{main_ns}}}c"):
-                    value = cell.find(f"{{{main_ns}}}v")
-                    val = value.text if value is not None else ""
-                    if cell.attrib.get("t") == "s" and val.isdigit():
-                        idx = int(val)
-                        val = shared[idx] if idx < len(shared) else val
-                    elif cell.attrib.get("t") == "inlineStr":
-                        val = "".join(t.text or "" for t in cell.iter(f"{{{main_ns}}}t"))
-                    vals.append(val)
-                if vals:
-                    rows_out.append(" | ".join(vals))
-            if rows_out:
-                parts.append(f"[Sheet: {name}]\n" + "\n".join(rows_out))
-        return "\n\n".join(parts)
+    import pandas as pd
+    sheets = pd.read_excel(filepath, sheet_name=None)
+    parts = []
+    for name, df in sheets.items():
+        parts.append(f"[Sheet: {name}]\n{df.to_string(index=False)}")
+    return "\n\n".join(parts)
 
 
 def _extract_json(filepath):
@@ -281,54 +201,20 @@ def _minmax(values):
 
 
 def _tfidf_scores(query, texts):
-    """Lightweight pure-Python TF-IDF cosine score.
-
-    This intentionally avoids NumPy/SciPy/scikit-learn so the Flask function
-    stays small enough for Vercel's serverless bundle limit. It keeps word and
-    short character signals for English, Tamil and Tanglish retrieval.
-    """
-    import math
-    from collections import Counter
-
-    if not texts:
-        return []
-
-    def features(text):
-        tokens = _tokenize(text)
-        feats = list(tokens)
-        # Character trigrams help with Tamil/Tanglish spelling variation.
-        compact = re.sub(r"\s+", " ", _normalize(text))
-        for i in range(max(0, len(compact) - 2)):
-            gram = compact[i:i + 3]
-            if not gram.isspace() and len(gram.strip()) >= 3:
-                feats.append("#" + gram)
-        return feats
-
-    query_features = Counter(features(query))
-    doc_features = [Counter(features(t)) for t in texts]
-    n_docs = len(texts)
-    df = Counter()
-    for counter in doc_features:
-        for term in counter:
-            df[term] += 1
-
-    def weight(term, tf):
-        idf = math.log((n_docs + 1) / (df.get(term, 0) + 1)) + 1.0
-        return (1.0 + math.log(tf)) * idf
-
-    qvec = {term: weight(term, tf) for term, tf in query_features.items()}
-    qnorm = math.sqrt(sum(v * v for v in qvec.values())) or 1.0
-    scores = []
-    for counter in doc_features:
-        dot = 0.0
-        dnorm_sq = 0.0
-        for term, tf in counter.items():
-            w = weight(term, tf)
-            dnorm_sq += w * w
-            if term in qvec:
-                dot += qvec[term] * w
-        scores.append(dot / (qnorm * (math.sqrt(dnorm_sq) or 1.0)))
-    return scores
+    """Dense-ish semantic-lexical signal: word n-grams catch meaning/vocabulary
+    overlap, char n-grams catch Tamil/Tanglish spelling variation and typos."""
+    if not (SKLEARN_OK and len(texts) > 1):
+        return [0.0] * len(texts)
+    try:
+        word = TfidfVectorizer(analyzer="word", ngram_range=(1, 2), sublinear_tf=True, max_features=30000)
+        char = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5), sublinear_tf=True, max_features=50000)
+        wm = word.fit_transform(texts + [query])
+        cm = char.fit_transform(texts + [query])
+        ws = cosine_similarity(wm[-1], wm[:-1]).ravel()
+        cs = cosine_similarity(cm[-1], cm[:-1]).ravel()
+        return [0.70 * w + 0.30 * c for w, c in zip(ws, cs)]
+    except ValueError:
+        return [0.0] * len(texts)
 
 
 def _bm25_scores(query, texts, k1=1.5, b=0.75):
@@ -471,103 +357,32 @@ def web_search(query, max_results=5):
 # ----------------------------------------------------------------------
 # LLM
 # ----------------------------------------------------------------------
-SYSTEM_PROMPT = """You are RAGORA, a high-quality multilingual AI knowledge assistant.
-
-CORE BEHAVIOR
-- Answer the user's actual question first. Do not wander.
-- Then, when the question involves learning, a task, a process, code, science, business, or a calculation, add a compact "How it works" or "Steps" section so the user understands how the answer was reached.
-- Match the user's language, script, and tone. Support multilingual and Tanglish conversations naturally.
-- Never invent facts, citations, document contents, calculations, or image contents.
-- If information is uncertain, say what is uncertain and explain what would resolve it.
-- For document questions, use DOCUMENT EVIDENCE only when it supports the answer. Cite the numbered evidence like [1], [2] immediately after supported claims.
-- If current/outside knowledge is needed and web evidence is supplied, use it. Do not pretend web evidence is a document source.
-
-MATH
-- Treat arithmetic, algebra, equations, percentages, units, statistics, calculus, and word problems carefully.
-- Show the key calculation/steps, not just the final number.
-- Preserve exact values when possible and label approximations.
-- Double-check signs, units, parentheses, and rounding.
-
-DIAGRAMS
-- If the user asks for a diagram, flowchart, architecture, process, mind map, sequence, hierarchy, or visual explanation, provide a concise explanation AND a Mermaid diagram in a ```mermaid``` block.
-- Make the diagram reflect the actual answer; do not invent unsupported relationships.
-
-IMAGES
-- When an image is attached, inspect the visible content and answer the question about it. If text is unreadable, say so rather than guessing.
-- For diagrams/charts in images, explain the visual structure and key values when readable.
-
-STYLE
-- Prefer a direct answer followed by useful detail.
-- For complex tasks use headings, numbered steps, bullets, examples, and formulas.
-- Keep casual chat short and natural.
-- Never claim to be human.
+SYSTEM_PROMPT = """You are RAGORA, a helpful AI knowledge assistant. Answer naturally in the user's Tamil/Tanglish/English style.
+For casual conversation (hello, hi, good morning, thank you, how are you, how was your day, small talk), respond warmly and naturally in 1-3 short sentences; do not browse the web for casual chat. You may say you are here to help, but never pretend to be a human.
+For document questions, use DOCUMENT EVIDENCE only when it actually supports the answer. Do not invent document facts.
+The DOCUMENT EVIDENCE is numbered like [1], [2], [3] in the order given. When a sentence you write is supported by one of those items, add its bracket number right after it. Only cite numbers that were actually given to you.
+If the document evidence does not contain the answer, use web research when the question needs outside/current knowledge. Be concise, direct, and useful.
 """
 
-def build_messages(history, user_message, doc_context=None, preferred_language="auto", image_data=None, mode="auto", memory_context=None):
-    language_instruction = "Detect the user language automatically and reply in that language." if preferred_language in (None, "", "auto") else f"Reply primarily in {preferred_language}. If the user explicitly asks for another language, follow the user."
-    mode_instructions = {
-        "auto": "Choose the best response style automatically.",
-        "fast": "Be concise and direct. Give the answer first and only the most useful steps.",
-        "research": "Act like a careful research assistant. Prefer current evidence when needed, distinguish facts from uncertainty, and finish with a concise Sources/Research notes section when web evidence is available.",
-        "study": "Act like a patient tutor. Explain the concept step by step, use a small example when useful, and end with 2-3 quick practice questions or a check-for-understanding prompt.",
-        "code": "Act like a senior coding mentor. Explain the cause, provide corrected code when needed, mention edge cases, and keep code blocks complete and runnable.",
-        "explain": "Teach the topic clearly from simple to advanced. Define unfamiliar terms and use examples or analogies.",
-        "agent": "Act like a task-oriented AI agent. Break complex requests into a short plan, execute the reasoning in a useful order, verify important claims, and present the finished result with clear next actions.",
-    }
-    mode_instruction = mode_instructions.get((mode or "auto").lower(), mode_instructions["auto"])
-    system = SYSTEM_PROMPT + "\nLANGUAGE PREFERENCE: " + language_instruction + "\nMODE: " + mode_instruction
-    if memory_context:
-        system += "\nUSER PREFERENCES / MEMORY (user-provided; use only when relevant):\n" + str(memory_context)[:1200]
-    messages = [{"role":"system","content":system}]
+def build_messages(history, user_message, doc_context=None):
+    # Keep the entire request intentionally tiny. This is critical for the 8K TPM org limit.
+    messages = [{"role":"system","content":SYSTEM_PROMPT}]
     for m in history[-2:]:
-        c=(m.get("content") or "").strip()[:260]
+        c=(m.get("content") or "").strip()[:180]
         if c:
             messages.append({"role":"assistant" if m.get("role")=="assistant" else "user","content":c})
     if doc_context:
         messages.append({"role":"system","content":"DOCUMENT EVIDENCE:\n"+doc_context[:1800]})
-    if image_data:
-        messages.append({"role":"user","content":[
-            {"type":"text","text":(user_message or "Analyze this image and answer the question.")[:900]},
-            {"type":"image_url","image_url":{"url":image_data}}
-        ]})
-    else:
-        messages.append({"role":"user","content":(user_message or "")[:900]})
+    messages.append({"role":"user","content":(user_message or "")[:700]})
     return messages
-
-def _reasoning_effort_for_model(model):
-    # Groq's Qwen 3.6 only accepts none/default reasoning; GPT-OSS accepts
-    # low/medium/high. Sending an unsupported value causes a 400 and was one
-    # of the easiest ways for RAGORA to fall into the generic chat error.
-    model = (model or "").lower()
-    if model.startswith("qwen/qwen3.6"):
-        return "none"
-    if model.startswith("qwen/qwen3.8"):
-        return "low"
-    if model.startswith("openai/gpt-oss"):
-        return "low"
-    return None
 
 def _groq_request(messages, model=None, max_tokens=180, compound=False):
     model = model or (_WEB_MODEL if compound else _resolve_llm_model())
     payload = {"model": model, "messages": messages, "stream": False}
     if not compound:
-        payload.update({"temperature":0.2,"max_completion_tokens":max_tokens})
-        effort = _reasoning_effort_for_model(model)
-        if effort:
-            payload["reasoning_effort"] = effort
-        if model.startswith("openai/gpt-oss"):
-            payload["include_reasoning"] = False
+        payload.update({"temperature":0.2,"max_completion_tokens":max_tokens,"reasoning_effort":"low"})
     headers={"Authorization":f"Bearer {Config.LLM_API_KEY}","Content-Type":"application/json"}
-    url=Config.GROQ_BASE_URL.rstrip("/")+"/chat/completions"
-    resp=requests.post(url,headers=headers,json=payload,timeout=Config.LLM_TIMEOUT)
-    # If an account/model rejects an optional reasoning parameter, retry once
-    # with the minimal OpenAI-compatible payload. This keeps provider changes
-    # from surfacing as a generic 'unexpected problem' in the UI.
-    if resp.status_code == 400 and not compound and ("reasoning" in (resp.text or "").lower() or "include_reasoning" in (resp.text or "").lower()):
-        payload.pop("reasoning_effort",None)
-        payload.pop("include_reasoning",None)
-        resp=requests.post(url,headers=headers,json=payload,timeout=Config.LLM_TIMEOUT)
-    return resp
+    return requests.post(Config.GROQ_BASE_URL.rstrip("/")+"/chat/completions",headers=headers,json=payload,timeout=Config.LLM_TIMEOUT)
 
 def _error_detail(resp):
     try:
@@ -595,10 +410,8 @@ def _extract_compound_sources(message):
         if x["url"] not in seen: seen.add(x["url"]); out.append(x)
     return out[:6]
 
-def _compound_web_answer(user_message, history, preferred_language="auto", mode="research"):
-    language = "the user's language" if preferred_language in (None, "", "auto") else preferred_language
-    mode_hint = "Do a careful research-style answer with current sources and clearly separated evidence." if mode in ("research", "agent") else "Answer using live web search when needed."
-    messages=[{"role":"user","content":f"{mode_hint} Be accurate, helpful, and answer in {language}. Preserve technical details.\nQuestion: {(user_message or '')[:700]}"}]
+def _compound_web_answer(user_message, history):
+    messages=[{"role":"user","content":f"Answer this using live web search when needed. Be concise and answer in the user's language.\nQuestion: {(user_message or '')[:700]}"}]
     try:
         resp=_groq_request(messages,_WEB_MODEL,max_tokens=0,compound=True)
         if resp.ok:
@@ -630,11 +443,11 @@ def _fallback_document_answer(user_message, doc_context):
     if not parts:return "I couldn't generate the AI answer right now, but no document evidence matched this question."
     return "Based on the uploaded document:\n\n"+parts[0][:1200]
 
-def _normal_answer(history,user_message,doc_context=None,web_context=None,web_sources=None,preferred_language="auto",image_data=None,mode="auto",memory_context=None):
-    messages=build_messages(history,user_message,doc_context,preferred_language,image_data=image_data,mode=mode,memory_context=memory_context)
+def _normal_answer(history,user_message,doc_context=None,web_context=None,web_sources=None):
+    messages=build_messages(history,user_message,doc_context)
     if web_context: messages.insert(-1,{"role":"system","content":"WEB EVIDENCE:\n"+web_context[:1800]})
     try:
-        resp=_groq_request(messages,(_resolve_vision_model() if image_data else _resolve_llm_model()),max_tokens=700 if image_data else 320,compound=False)
+        resp=_groq_request(messages,_resolve_llm_model(),max_tokens=180,compound=False)
         if resp.ok:
             msg=((resp.json().get("choices") or [{}])[0].get("message") or {})
             answer=(msg.get("content") or "").strip()
@@ -643,20 +456,10 @@ def _normal_answer(history,user_message,doc_context=None,web_context=None,web_so
         if _rate_limited(resp) or resp.status_code in (413,500,502,503,504):
             if doc_context:return {"answer":_fallback_document_answer(user_message,doc_context),"used_web":False,"sources":[]}
             if web_context:return {"answer":"Web search found these results, but the AI summary limit is temporarily busy.\n\n"+web_context[:1400],"used_web":True,"sources":web_sources or []}
-        detail=_error_detail(resp) if resp is not None else "Unknown provider error"
-        if resp is not None and resp.status_code in (401,403):
-            answer="Groq API authentication failed. Vercel Environment Variables-la GROQ_API_KEY check pannunga."
-        elif resp is not None and resp.status_code in (400,404,422):
-            answer=f"Groq request rejected ({resp.status_code}). {detail[:240]}"
-        else:
-            answer=f"AI provider returned {getattr(resp,'status_code','an error')}. {detail[:240]}"
-        return {"answer":answer,"used_web":bool(web_context),"sources":web_sources or []}
-    except requests.RequestException as exc:
+        return {"answer":"I couldn't generate the answer right now. Please try again in a moment.","used_web":bool(web_context),"sources":web_sources or []}
+    except requests.RequestException:
         if doc_context:return {"answer":_fallback_document_answer(user_message,doc_context),"used_web":False,"sources":[]}
-        return {"answer":f"The AI service is temporarily unavailable ({type(exc).__name__}). Please try again shortly.","used_web":bool(web_context),"sources":web_sources or []}
-    except Exception as exc:
-        if doc_context:return {"answer":_fallback_document_answer(user_message,doc_context),"used_web":False,"sources":[]}
-        return {"answer":f"RAGORA could not complete the AI request ({type(exc).__name__}). Please check the AI provider configuration and try again.","used_web":bool(web_context),"sources":web_sources or []}
+        return {"answer":"The AI service is temporarily unavailable. Please try again shortly.","used_web":bool(web_context),"sources":web_sources or []}
 
 def _is_casual_chat(user_message):
     text=_normalize(user_message).strip()
@@ -668,28 +471,21 @@ def _needs_web_search(user_message):
     text=_normalize(user_message)
     return any(w in text for w in ("latest","today","now","current","recent","news","weather","price","score","schedule","2026","இன்று","இப்போ","தற்போது","நேற்று","நாளை"))
 
-def generate_answer(history,user_message,doc_context=None,preferred_language="auto",image_data=None,mode="auto",memory_context=None):
+def generate_answer(history,user_message,doc_context=None):
     if not Config.LLM_API_KEY:
         return {"answer":"Groq API key configure pannala. .env-la GROQ_API_KEY add pannunga.","used_web":False,"sources":[]}
-    mode=(mode or "auto").lower()
-    # Image questions must go directly to a vision-capable model. Do not route
-    # them through the text-only web path, which would otherwise drop the image.
-    if image_data:
-        return _normal_answer(history,user_message,doc_context,preferred_language=preferred_language,image_data=image_data,mode=mode,memory_context=memory_context)
     # Casual chat stays conversational and does not trigger web search.
-    if _is_casual_chat(user_message) and mode == "auto" and not image_data:
-        return _normal_answer(history,user_message,None,preferred_language=preferred_language,image_data=None,mode=mode,memory_context=memory_context)
-    # Web is opt-in for ordinary questions: normal chat should not suddenly
-    # produce source cards. Research/agent modes or clearly time-sensitive
-    # questions can use live web evidence.
-    if mode in ("research", "agent") or _needs_web_search(user_message):
-        web=_compound_web_answer(user_message,history,preferred_language,mode=mode)
+    if _is_casual_chat(user_message):
+        return _normal_answer(history,user_message,None)
+    # Current/live questions and weak/no document matches use Compound Mini.
+    if not doc_context or _needs_web_search(user_message):
+        web=_compound_web_answer(user_message,history)
         if web:return web
         web_context,sources=_duckduckgo_web_context(user_message)
         if web_context:
-            return _normal_answer(history,user_message,doc_context if mode=="agent" else None,web_context,sources,preferred_language,image_data=image_data,mode=mode,memory_context=memory_context)
-        return _normal_answer(history,user_message,doc_context,preferred_language=preferred_language,image_data=image_data,mode=mode,memory_context=memory_context)
-    return _normal_answer(history,user_message,doc_context,preferred_language=preferred_language,image_data=image_data,mode=mode,memory_context=memory_context)
+            return _normal_answer(history,user_message,None,web_context,sources)
+        return _normal_answer(history,user_message,None)
+    return _normal_answer(history,user_message,doc_context)
 
 def generate_title(first_message):
     text=(first_message or "").strip().replace("\n"," ")

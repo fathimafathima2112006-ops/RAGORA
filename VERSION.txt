@@ -1,2 +1,2 @@
-RAGORA SUPER AI 2.3 PRO — 2026-09-14
-Vercel Slim Runtime + retrieval UI fixes + multilingual voice + vision + conditional sources
+RAGORA Professional 2.0 - Groq Safe RAG/Web Routing
+Build: 2026-09-01
