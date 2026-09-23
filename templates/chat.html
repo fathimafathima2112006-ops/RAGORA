@@ -5,6 +5,7 @@
 <meta name="theme-color" content="#f6f8fc"><link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
 <title>RAGORA · AI Knowledge Platform</title><link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v='20260923pro2') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/ux_patch.css', v='20260923pro2') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/ragora_fx.css', v='20260923pro2') }}">
 </head>
 <body class="theme-light app-page">
 <div class="app-bg" aria-hidden="true"><div class="aurora a1"></div><div class="aurora a2"></div><div class="bg-grid"></div></div>
@@ -38,4 +39,5 @@
 <input id="fileInput" type="file" hidden multiple accept=".pdf,.docx,.pptx,.txt,.md,.csv,.xlsx,.json,.py,.js,.ts,.java,.c,.cpp,.html,.css,.sql">
 <script>window.RAGORA_USER={name:{{ name|tojson }},picture:{{ picture|tojson }}};</script>
 <script src="{{ url_for('static', filename='js/chat.js', v='20260923pro2') }}"></script>
+<script src="{{ url_for('static', filename='js/ragora_fx.js', v='20260923pro2') }}"></script>
 </body></html>
