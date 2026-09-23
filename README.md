@@ -80,3 +80,7 @@ This build adds a polished AI workspace with:
 - PDF, DOCX, PPTX, TXT, Markdown, CSV, XLSX, JSON and source-code extraction.
 - Mobile-first light professional UI with responsive workspace and Retrieval Explorer.
 - Groq OpenAI-compatible API using `openai/gpt-oss-20b`; no retired Compound model dependency.
+
+## Direct Vercel deployment
+
+`api/index.py` exports the Flask app directly; Vercel routes requests to it with `vercel.json`. No Render gateway URL is used. Configure `SECRET_KEY`, `GROQ_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` in Vercel for the Production environment, then redeploy. `GROQ_API_KEY` must be an active Groq key with access to `openai/gpt-oss-20b`. Check `/health` for the app and AI-key configuration status. Vercel `/tmp` storage is ephemeral; use durable managed storage for persistent conversations and files.

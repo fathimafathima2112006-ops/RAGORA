@@ -16,4 +16,4 @@
 
 The `not_found` symptom can also be caused by Vercel function-local SQLite storage being ephemeral. The UI/API recovery above prevents a stale ID from becoming a visible dead-end, but persistent chat history and uploaded files still require durable storage.
 
-For production, run the Flask backend on the included Render configuration with the persistent disk (`DB_PATH=/var/data/ragora.db`, `UPLOAD_DIR=/var/data/uploads`). If Vercel is used as the public gateway, configure its `RENDER_URL` to point to that persistent backend.
+Vercel serves the Flask app directly through `api/index.py`; it does not require a Render gateway URL. Vercel local storage is ephemeral, so use managed database/object storage if conversations and uploaded files must persist between function instances.

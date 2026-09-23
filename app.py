@@ -203,7 +203,7 @@ def logout():
 # ---------------- Main ----------------
 @app.route("/health")
 def health():
-    return jsonify({"ok": True, "service": "RAGORA", "groq_configured": bool(Config.GROQ_API_KEY)})
+    return jsonify({"ok": True, "service": "RAGORA", "groq_configured": bool(Config.GROQ_API_KEY), "model": "openai/gpt-oss-20b"})
 
 
 @app.route("/")
@@ -450,12 +450,13 @@ def _answer_for_conversation(conv_id, user_id, user_message, mode="auto"):
             mode=mode
         )
     except Exception:
+        app.logger.exception("Answer generation failed")
         fallback=(
             rag_engine._fallback_document_answer(user_message,doc_context)
             if doc_context
-            else "I’m temporarily unable to reach the AI service. Please try again in a moment."
+            else "RAGORA hit an AI backend error. Check the Vercel Function Logs for this request; the prompt remains in this chat."
         )
-        result={"answer":fallback,"used_web":False,"sources":[],"answer_mode":"fallback"}
+        result={"answer":fallback,"used_web":False,"sources":[],"answer_mode":"fallback","error_code":"answer_generation_error"}
 
     result["elapsed_ms"]=round((time.perf_counter()-started)*1000)
     result["match_percent"]=match_percent
@@ -493,26 +494,7 @@ def api_chat():
         if not conv:
             return jsonify({"error": "conversation_unavailable", "message": "A new chat session could not be opened."}), 503
 
-    try:
-        result = _answer_for_conversation(conv_id, session["user_id"], message, mode=mode)
-    except Exception:
-        # Never let an unexpected error (LLM timeout, retrieval crash, etc.)
-        # bubble up as a raw 500 — that is what produces the generic
-        # "trouble reaching the AI service" message on every single turn.
-        # Log the real traceback (visible in Vercel/Render function logs)
-        # and answer with something the user can act on instead.
-        app.logger.exception("chat answer generation failed")
-        result = {
-            "answer": (
-                "RAGORA hit an unexpected server error while generating that answer "
-                "(check the deployment logs for details — this is usually a missing "
-                "GROQ_API_KEY or a timed-out request). Please try again."
-            ),
-            "used_web": False,
-            "sources": [],
-            "citations": [],
-        }
-
+    result = _answer_for_conversation(conv_id, session["user_id"], message, mode=mode)
     db.add_message(conv_id, "user", message)
     db.add_message(conv_id, "assistant", result["answer"], used_web=int(result["used_web"]))
 
@@ -532,6 +514,7 @@ def api_chat():
         "knowledge_chunks": result.get("knowledge_chunks", 0),
         "answer_mode": result.get("answer_mode", "concise"),
         "mode": result.get("mode", mode),
+        "error_code": result.get("error_code"),
     })
 
 
