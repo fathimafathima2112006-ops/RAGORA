@@ -29,6 +29,49 @@ async function createNewChat(){const d=await api('/api/conversations',{method:'P
 async function openConversation(id){state.currentConversationId=id;const msgs=await api(`/api/conversations/${id}/messages`);el('emptyState')?.remove();el('messages').innerHTML='';msgs.forEach(m=>renderMessage(m.role,m.content,!!m.used_web,[],{},[]));renderConversationList();}
 function latexToReadable(s){return s.replace(/\\text\{([^}]*)\}/g,'$1').replace(/\\left/g,'').replace(/\\right/g,'').replace(/\\sum_\{?([^}\s]+)\}?/g,'Σ<sub>$1</sub>').replace(/\\phi/g,'φ').replace(/\\sigma/g,'σ').replace(/\\alpha/g,'α').replace(/\\beta/g,'β').replace(/\\lambda/g,'λ').replace(/\\mu/g,'μ').replace(/\\sqrt\{([^}]*)\}/g,'√($1)').replace(/\\exp/g,'exp').replace(/\\times/g,'×').replace(/\\cdot/g,'·').replace(/\\leq/g,'≤').replace(/\\geq/g,'≥').replace(/\\in/g,'∈').replace(/\\to/g,'→').replace(/\\approx/g,'≈').replace(/\^\{([^}]*)\}/g,'<sup>$1</sup>').replace(/_\{([^}]*)\}/g,'<sub>$1</sub>').replace(/\^([A-Za-z0-9]+)/g,'<sup>$1</sup>').replace(/_([A-Za-z0-9]+)/g,'<sub>$1</sub>')}
 function renderMarkdown(text){let s=esc(text);s=s.replace(/```([\s\S]*?)```/g,'<pre><code>$1</code></pre>');s=latexToReadable(s).replace(/\\\((.*?)\\\)/g,'<span class="math">$1</span>').replace(/\\\[([\s\S]*?)\\\]/g,'<div class="math-block">$1</div>');s=s.replace(/^### (.*)$/gm,'<h4>$1</h4>').replace(/^## (.*)$/gm,'<h3>$1</h3>').replace(/^# (.*)$/gm,'<h2>$1</h2>').replace(/^(\d+)\. (.*)$/gm,'<div class="answer-step"><b>$1.</b> $2</div>').replace(/^- (.*)$/gm,'<div class="answer-bullet">• $1</div>').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/`([^`]+)`/g,'<code>$1</code>');return s.replace(/\n/g,'<br>')}
+
+function detectSpeechLocale(text){
+  const s=String(text||'');
+  const tamil=(s.match(/[\u0B80-\u0BFF]/g)||[]).length;
+  const letters=(s.match(/[A-Za-z\u0B80-\u0BFF]/g)||[]).length;
+  if(tamil>=2 && (tamil/Math.max(1,letters))>=0.12) return 'ta-IN';
+  return 'en-IN';
+}
+function getSpeechVoice(locale){
+  if(!('speechSynthesis' in window)) return null;
+  const voices=window.speechSynthesis.getVoices?.()||[];
+  const exact=voices.find(v=>(v.lang||'').toLowerCase()===locale.toLowerCase());
+  if(exact) return exact;
+  const base=locale.split('-')[0].toLowerCase();
+  return voices.find(v=>(v.lang||'').toLowerCase().startsWith(base))||null;
+}
+function speakAnswer(text, button){
+  if(!('speechSynthesis' in window)){
+    toast('Answer voice is not supported in this browser','error'); return;
+  }
+  const clean=String(text||'').replace(/[*_#`>|]/g,' ').replace(/\[(.*?)\]\((.*?)\)/g,'$1').replace(/\s+/g,' ').trim();
+  if(!clean) return;
+  if(window.speechSynthesis.speaking) window.speechSynthesis.cancel();
+  const locale=detectSpeechLocale(clean);
+  const u=new SpeechSynthesisUtterance(clean);
+  u.lang=locale;
+  u.rate=0.94;
+  u.pitch=1;
+  const voice=getSpeechVoice(locale);
+  if(voice) u.voice=voice;
+  if(button){
+    button.classList.add('speaking');
+    button.textContent='■ Stop';
+  }
+  u.onend=()=>{ if(button){button.classList.remove('speaking');button.textContent='🔊 Read'} };
+  u.onerror=()=>{ if(button){button.classList.remove('speaking');button.textContent='🔊 Read'} };
+  window.speechSynthesis.speak(u);
+}
+function stopAnswerVoice(button){
+  if('speechSynthesis' in window) window.speechSynthesis.cancel();
+  if(button){button.classList.remove('speaking');button.textContent='🔊 Read'}
+}
+
 function renderMessage(role,content,usedWeb=false,sources=[],meta={},citations=[]){
   const row=document.createElement('div');
   row.className=`msg-row ${role}`;
@@ -50,9 +93,14 @@ function renderMessage(role,content,usedWeb=false,sources=[],meta={},citations=[
       ${meta.match_percent?`<span class="match-tag">Retrieval ${meta.match_percent}%</span>`:''}
       ${meta.elapsed_ms?`<span class="time-tag">${(meta.elapsed_ms/1000).toFixed(1)}s</span>`:''}
       ${meta.answer_mode==='detailed'?'<span class="detail-tag">Detailed</span>':''}
-      <button class="copy-btn">Copy</button><button class="copy-btn regenerate-btn">Regenerate</button><button class="feedback-btn" data-vote="up" title="Helpful">♡</button><button class="feedback-btn" data-vote="down" title="Not helpful">♧</button>`;
+      <button class="copy-btn">Copy</button><button class="copy-btn speak-btn" title="Read this answer aloud">🔊 Read</button><button class="copy-btn regenerate-btn">Regenerate</button><button class="feedback-btn" data-vote="up" title="Helpful">♡</button><button class="feedback-btn" data-vote="down" title="Not helpful">♧</button>`;
     metaRow.querySelector('.copy-btn').onclick=()=>{
       navigator.clipboard?.writeText(content).then(()=>toast('Answer copied'));
+    };
+    const speakBtn=metaRow.querySelector('.speak-btn');
+    if(speakBtn) speakBtn.onclick=()=>{
+      if(speakBtn.classList.contains('speaking')) stopAnswerVoice(speakBtn);
+      else speakAnswer(content,speakBtn);
     };
     metaRow.querySelector('.regenerate-btn')?.addEventListener('click',()=>regenerateLast());
     metaRow.querySelectorAll('.feedback-btn').forEach(b=>b.onclick=()=>{b.classList.add('selected');toast(b.dataset.vote==='up'?'Thanks — marked helpful':'Thanks — feedback noted','info');localStorage.setItem('ragora:lastFeedback',b.dataset.vote)});
@@ -122,7 +170,7 @@ function openSource(c){
   m.addEventListener('click',e=>{if(e.target===m)m.remove()});
 }
 
-function bindChat(){document.querySelectorAll('[data-prompt]').forEach(b=>b.onclick=()=>{const i=el('chatInput');i.value=b.dataset.prompt;i.focus();i.dispatchEvent(new Event('input'));});const i=el('chatInput');i.oninput=()=>{i.style.height='auto';i.style.height=Math.min(i.scrollHeight,180)+'px'};i.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();el('chatForm').requestSubmit()}};el('uploadBtn').onclick=()=>el('fileInput').click();el('chatForm').onsubmit=sendChat;el('knowledgeHint').textContent=state.docs.length?`${state.docs.length} documents indexed`:'Add documents or ask a general question';const mode=el('answerMode'),status=el('modeStatus');const labels={auto:'Balanced answers',deep:'Long-form reasoning',study:'Tutor-style learning',summary:'Evidence summary',quiz:'Quiz generation',flashcards:'Revision cards',research:'Research mode'};mode?.addEventListener('change',()=>{state.lastMode=mode.value;if(status)status.textContent=labels[mode.value]||'Balanced answers'});el('modeHelp')?.addEventListener('click',()=>toast('Deep Think = detailed reasoning · Study = tutor · Summary / Quiz / Flashcards = document tools · Research = evidence-first research.','info'));const voice=el('voiceBtn');if(voice){const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR){voice.disabled=true}else voice.onclick=()=>{const r=new SR();r.lang='en-IN';r.interimResults=false;r.maxAlternatives=1;r.onstart=()=>{voice.classList.add('recording');toast('Listening…','info')};r.onend=()=>voice.classList.remove('recording');r.onerror=()=>{voice.classList.remove('recording');toast('Voice input failed','error')};r.onresult=e=>{i.value=(i.value?i.value+' ':'')+e.results[0][0].transcript;i.dispatchEvent(new Event('input'));i.focus()};r.start()}}const dz=el('uploadDropZone');if(dz){['dragenter','dragover'].forEach(v=>dz.addEventListener(v,e=>{e.preventDefault();dz.classList.add('dragging')}));['dragleave','drop'].forEach(v=>dz.addEventListener(v,e=>{e.preventDefault();dz.classList.remove('dragging')}));dz.addEventListener('drop',e=>handleFiles(Array.from(e.dataTransfer.files||[])))}document.onkeydown=e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();i.focus()}if(e.key==='Escape'&&state.activeRequest)state.activeRequest.abort()};}
+function bindChat(){document.querySelectorAll('[data-prompt]').forEach(b=>b.onclick=()=>{const i=el('chatInput');i.value=b.dataset.prompt;i.focus();i.dispatchEvent(new Event('input'));});const i=el('chatInput');i.oninput=()=>{i.style.height='auto';i.style.height=Math.min(i.scrollHeight,180)+'px'};i.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();el('chatForm').requestSubmit()}};el('uploadBtn').onclick=()=>el('fileInput').click();el('chatForm').onsubmit=sendChat;el('knowledgeHint').textContent=state.docs.length?`${state.docs.length} documents indexed`:'Add documents or ask a general question';const mode=el('answerMode'),status=el('modeStatus');const labels={auto:'Balanced answers',deep:'Long-form reasoning',study:'Tutor-style learning',summary:'Evidence summary',quiz:'Quiz generation',flashcards:'Revision cards',research:'Research mode'};mode?.addEventListener('change',()=>{state.lastMode=mode.value;if(status)status.textContent=labels[mode.value]||'Balanced answers'});el('modeHelp')?.addEventListener('click',()=>toast('Deep Think = detailed reasoning · Study = tutor · Summary / Quiz / Flashcards = document tools · Research = evidence-first research.','info'));const voice=el('voiceBtn');if(voice){const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR){voice.disabled=true}else voice.onclick=()=>{const r=new SR();r.lang=detectSpeechLocale(i.value||'');r.interimResults=false;r.maxAlternatives=1;r.onstart=()=>{voice.classList.add('recording');toast('Listening…','info')};r.onend=()=>voice.classList.remove('recording');r.onerror=()=>{voice.classList.remove('recording');toast('Voice input failed','error')};r.onresult=e=>{i.value=(i.value?i.value+' ':'')+e.results[0][0].transcript;i.dispatchEvent(new Event('input'));i.focus()};r.start()}}const dz=el('uploadDropZone');if(dz){['dragenter','dragover'].forEach(v=>dz.addEventListener(v,e=>{e.preventDefault();dz.classList.add('dragging')}));['dragleave','drop'].forEach(v=>dz.addEventListener(v,e=>{e.preventDefault();dz.classList.remove('dragging')}));dz.addEventListener('drop',e=>handleFiles(Array.from(e.dataTransfer.files||[])))}document.onkeydown=e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();i.focus()}if(e.key==='Escape'&&state.activeRequest)state.activeRequest.abort()};}
 function handleFiles(files){const input=el('fileInput');if(!files.length)return;const dt=new DataTransfer();files.forEach(f=>dt.items.add(f));input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));}
 
 async function sendChat(e){e.preventDefault();const input=el('chatInput'),text=input.value.trim();if(!text)return;const previousId=state.currentConversationId,mode=el('answerMode')?.value||'auto';state.lastUserPrompt=text;state.lastMode=mode;try{if(!state.currentConversationId){const d=await api('/api/conversations',{method:'POST'});state.currentConversationId=d.id}el('emptyState')?.remove();renderMessage('user',text);input.value='';input.style.height='auto';const t=document.createElement('div');t.className='msg-row assistant';t.id='typing';t.innerHTML='<div class="assistant-avatar">R</div><div class="typing-label"><span class="typing-dot"></span> RAGORA is thinking…</div>';el('messages').appendChild(t);el('messages').scrollTop=el('messages').scrollHeight;el('sendBtn').disabled=true;const controller=new AbortController();state.activeRequest=controller;let d;try{d=await api('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({conversation_id:state.currentConversationId,message:text,mode}),signal:controller.signal})}catch(err){if(err.name==='AbortError'){el('typing')?.remove();toast('Generation stopped','info');return}if(err.code!=='not_found')throw err;const fresh=await api('/api/conversations',{method:'POST'});state.currentConversationId=fresh.id;d=await api('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({conversation_id:fresh.id,message:text,mode})});toast('New chat session restored','info')}el('typing')?.remove();state.currentConversationId=d.conversation_id||state.currentConversationId;renderMessage('assistant',d.answer,!!d.used_web,d.sources||[],d,d.citations||[]);loadConversations().then(renderConversationList).catch(()=>{})}catch(err){el('typing')?.remove();if(previousId!==null)state.currentConversationId=previousId;if(err.name!=='AbortError'){
@@ -211,3 +259,5 @@ nav();el('themeToggle').onclick=theme;el('brandHome').onclick=()=>renderView('ch
  const nativeFetch=window.fetch;
  window.fetch=async(...a)=>{try{const r=await nativeFetch(...a);if(!r.ok&&r.status>=500)show('AI service is temporarily busy. Your message is safe — please try Send again in a moment.');return r}catch(e){show('AI service connection is temporarily unavailable. Please try Send again in a moment.');throw e}};
 })();
+
+if('speechSynthesis' in window) window.speechSynthesis.addEventListener('voiceschanged',()=>window.speechSynthesis.getVoices());
