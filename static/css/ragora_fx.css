@@ -1,0 +1,165 @@
+/* ==========================================================================
+   RAGORA FX — shared motion/visual layer for login + app shell
+   GPU-friendly: only transform/opacity/filter are animated (no layout thrash).
+   Every effect below is disabled/flattened under prefers-reduced-motion.
+   ========================================================================== */
+
+:root{
+  --rf-glass-bg: rgba(255,255,255,.55);
+  --rf-glass-border: rgba(255,255,255,.6);
+  --rf-shadow: 0 10px 34px rgba(16,24,40,.10);
+  --rf-accent: #5168e8;
+  --rf-accent-2: #7fd7ff;
+}
+.theme-dark{
+  --rf-glass-bg: rgba(22,26,38,.55);
+  --rf-glass-border: rgba(255,255,255,.08);
+  --rf-shadow: 0 10px 34px rgba(0,0,0,.45);
+}
+
+/* ---------- animated gradient / ambient background ---------- */
+.app-bg .aurora{will-change:transform,opacity;animation:rf-drift 22s ease-in-out infinite alternate}
+.app-bg .aurora.a2{animation-duration:28s;animation-direction:alternate-reverse}
+@keyframes rf-drift{
+  0%{transform:translate3d(0,0,0) scale(1)}
+  50%{transform:translate3d(3%,-4%,0) scale(1.08)}
+  100%{transform:translate3d(-3%,3%,0) scale(1)}
+}
+.ra-login-showcase:before{animation:rf-drift 24s ease-in-out infinite alternate}
+.ra-login-showcase:after{animation:rf-drift 30s ease-in-out infinite alternate-reverse}
+
+/* ---------- glassmorphism ---------- */
+.panel,.metric-card,.settings-card,.ra-login-card,.rf-glass{
+  background:var(--rf-glass-bg)!important;
+  backdrop-filter:blur(16px) saturate(140%);
+  -webkit-backdrop-filter:blur(16px) saturate(140%);
+  border:1px solid var(--rf-glass-border);
+  box-shadow:var(--rf-shadow);
+  transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s ease;
+  will-change:transform;
+}
+
+/* ---------- 3D hover tilt (driven by ragora_fx.js setting --rx/--ry) ---------- */
+[data-tilt]{
+  transform:perspective(900px) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg)) translateZ(0);
+  transform-style:preserve-3d;
+}
+[data-tilt]:hover{box-shadow:0 18px 46px rgba(16,24,40,.16)}
+
+/* ---------- floating 3D orbital logo ---------- */
+.welcome-visual{perspective:800px}
+.welcome-core{animation:rf-float 4.5s ease-in-out infinite}
+.orbit{animation:rf-orbit-spin 9s linear infinite;transform-style:preserve-3d}
+@keyframes rf-float{
+  0%,100%{transform:translateY(0) rotateX(6deg)}
+  50%{transform:translateY(-10px) rotateX(-6deg)}
+}
+@keyframes rf-orbit-spin{
+  from{transform:rotateX(62deg) rotateZ(0deg)}
+  to{transform:rotateX(62deg) rotateZ(360deg)}
+}
+.ra-logo,.ra-mobile-brand{animation:rf-float 5s ease-in-out infinite}
+
+/* ---------- 3D rotating globe (login showcase) ---------- */
+.rf-globe-wrap{position:relative;width:220px;height:220px;margin:8px 0 6px;perspective:900px}
+.rf-globe{
+  position:absolute;inset:0;border-radius:50%;transform-style:preserve-3d;
+  background:
+    radial-gradient(circle at 32% 28%, rgba(255,255,255,.95), rgba(255,255,255,0) 40%),
+    radial-gradient(circle at 65% 70%, rgba(127,215,255,.55), transparent 55%),
+    linear-gradient(140deg,#5168e8 0%,#7fd7ff 55%,#eef3ff 100%);
+  box-shadow:0 30px 60px -20px rgba(81,104,232,.45), inset -18px -18px 40px rgba(16,24,40,.28), inset 12px 12px 30px rgba(255,255,255,.5);
+  animation:rf-spin-y 16s linear infinite;
+}
+.rf-globe:before,.rf-globe:after{
+  content:"";position:absolute;inset:0;border-radius:50%;
+  background:repeating-linear-gradient(90deg, transparent 0 8%, rgba(16,24,40,.10) 8% 8.6%);
+  mix-blend-mode:multiply;
+}
+.rf-globe:after{
+  background:repeating-linear-gradient(0deg, transparent 0 12%, rgba(16,24,40,.08) 12% 12.6%);
+}
+.rf-globe-ring{
+  position:absolute;left:50%;top:50%;width:270px;height:270px;margin:-135px 0 0 -135px;
+  border:1px solid rgba(81,104,232,.35);border-radius:50%;
+  transform:rotateX(72deg);
+  animation:rf-ring-spin 10s linear infinite;
+}
+.rf-globe-ring.rf-ring-2{width:310px;height:310px;margin:-155px 0 0 -155px;border-color:rgba(127,215,255,.4);animation-duration:16s;animation-direction:reverse}
+@keyframes rf-spin-y{from{transform:rotateY(0deg) rotateX(8deg)}to{transform:rotateY(360deg) rotateX(8deg)}}
+@keyframes rf-ring-spin{from{transform:rotateX(72deg) rotateZ(0deg)}to{transform:rotateX(72deg) rotateZ(360deg)}}
+
+/* ---------- message entrance animations ---------- */
+.msg-row{animation:rf-msg-in .42s cubic-bezier(.2,.8,.2,1) both}
+@keyframes rf-msg-in{
+  from{opacity:0;transform:translateY(10px) scale(.985)}
+  to{opacity:1;transform:translateY(0) scale(1)}
+}
+
+/* ---------- button hover/press micro-interactions ---------- */
+.btn,.send-btn,.attach-btn,.new-chat,.nav-item,.ra-google-btn,.icon-btn,.quick-grid button{
+  transition:transform .15s cubic-bezier(.2,.8,.2,1),box-shadow .15s ease,background .2s ease;
+}
+.btn:hover,.send-btn:hover,.attach-btn:hover,.new-chat:hover,.ra-google-btn:hover,.quick-grid button:hover{
+  transform:translateY(-2px);
+}
+.btn:active,.send-btn:active,.attach-btn:active,.new-chat:active,.ra-google-btn:active{
+  transform:translateY(0) scale(.97);
+}
+
+/* ---------- shimmer ---------- */
+.rf-shimmer{position:relative;overflow:hidden}
+.rf-shimmer:after{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.5) 50%,transparent 70%);
+  transform:translateX(-120%);
+  animation:rf-shimmer 2.6s ease-in-out infinite;
+}
+@keyframes rf-shimmer{to{transform:translateX(120%)}}
+
+/* ---------- AI thinking dots ---------- */
+.typing-label{display:inline-flex;align-items:center;gap:6px}
+.typing-dot{width:6px;height:6px;border-radius:50%;background:var(--rf-accent);display:inline-block;position:relative}
+.typing-dot,.typing-dot:before,.typing-dot:after{animation:rf-dot 1s ease-in-out infinite}
+.typing-dot:before,.typing-dot:after{
+  content:"";position:absolute;top:0;width:6px;height:6px;border-radius:50%;background:var(--rf-accent);
+}
+.typing-dot:before{left:-11px;animation-delay:-.16s}
+.typing-dot:after{left:11px;animation-delay:.16s}
+@keyframes rf-dot{0%,80%,100%{opacity:.25;transform:scale(.7)}40%{opacity:1;transform:scale(1)}}
+
+/* ---------- voice button pulse ---------- */
+.voice-btn.recording{position:relative;color:#fff;background:var(--rf-accent)!important;animation:rf-pulse-scale 1s ease-in-out infinite}
+.voice-btn.recording:before{
+  content:"";position:absolute;inset:-6px;border-radius:inherit;border:2px solid var(--rf-accent);
+  animation:rf-pulse-ring 1.4s ease-out infinite;
+}
+@keyframes rf-pulse-scale{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+@keyframes rf-pulse-ring{0%{opacity:.7;transform:scale(1)}100%{opacity:0;transform:scale(1.6)}}
+
+/* ---------- account/profile panel (Settings) ---------- */
+.rf-account-card{display:flex;flex-direction:column;gap:16px}
+.rf-account-row{display:flex;align-items:center;gap:14px}
+.rf-account-avatar{width:52px;height:52px;border-radius:50%;object-fit:cover;box-shadow:0 6px 18px rgba(16,24,40,.18);border:2px solid rgba(255,255,255,.7)}
+.rf-account-meta{display:flex;flex-direction:column;gap:4px}
+.rf-account-meta strong{font-size:15px}
+.rf-account-status{font-size:11px;color:#12b76a;font-weight:700}
+.rf-signout-btn{align-self:flex-start;text-decoration:none;text-align:center}
+
+/* ---------- mobile-friendly performance ---------- */
+@media (max-width:720px){
+  .app-bg .aurora,.ra-login-showcase:before,.ra-login-showcase:after{animation-duration:38s}
+  .rf-globe,.rf-globe-ring{animation-duration:24s}
+  [data-tilt]{transform:none!important}
+}
+
+/* ---------- reduced motion accessibility ---------- */
+@media (prefers-reduced-motion: reduce){
+  *,*:before,*:after{
+    animation-duration:.001ms!important;
+    animation-iteration-count:1!important;
+    transition-duration:.001ms!important;
+    scroll-behavior:auto!important;
+  }
+  [data-tilt]{transform:none!important}
+}
