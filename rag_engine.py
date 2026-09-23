@@ -439,21 +439,82 @@ def build_messages(history, user_message, doc_context=None, mode="auto"):
     return messages
 
 def _groq_request(messages, model=None, max_tokens=None, compound=False):
-    model = model or (_WEB_MODEL if compound else _resolve_llm_model())
+    """Reliable Groq chat request with a small compatibility retry chain.
+
+    Compound systems were retired, so all normal requests use a supported
+    chat model. GPT-OSS supports reasoning_effort and include_reasoning=False.
+    """
+    if not Config.LLM_API_KEY:
+        raise RuntimeError("GROQ_API_KEY is not configured")
+
+    primary = model or _resolve_llm_model()
+    candidates = []
+    for candidate in (primary, _PRIMARY_MODEL, "qwen/qwen3.8-27b"):
+        if candidate and candidate not in candidates and candidate not in _BLOCKED_MODELS:
+            candidates.append(candidate)
+
     if max_tokens is None:
-        max_tokens=Config.MAX_OUTPUT_TOKENS
-    payload={"model":model,"messages":messages,"stream":False}
-    if not compound:
-        payload.update({
-            "temperature":0.2,
-            "max_completion_tokens":max_tokens,
-            "reasoning_effort":"low",
-        })
-    headers={"Authorization":f"Bearer {Config.LLM_API_KEY}","Content-Type":"application/json"}
-    return requests.post(
-        Config.GROQ_BASE_URL.rstrip()+"/chat/completions",
-        headers=headers,json=payload,timeout=Config.LLM_TIMEOUT
-    )
+        max_tokens = Config.MAX_OUTPUT_TOKENS
+    max_tokens = max(120, min(int(max_tokens), 480))
+
+    headers = {
+        "Authorization": f"Bearer {Config.LLM_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    last_response = None
+    last_error = None
+    import time
+
+    for candidate in candidates:
+        payload = {
+            "model": candidate,
+            "messages": messages,
+            "stream": False,
+            "temperature": 0.2,
+            "max_completion_tokens": max_tokens,
+        }
+        if candidate.startswith("openai/gpt-oss"):
+            payload["reasoning_effort"] = "low"
+            payload["include_reasoning"] = False
+
+        for attempt in range(2):
+            try:
+                response = requests.post(
+                    Config.GROQ_BASE_URL.rstrip("/") + "/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=Config.LLM_TIMEOUT,
+                )
+                last_response = response
+                if response.ok:
+                    _MODEL_CACHE.update({"model": candidate, "expires": time.time() + 300})
+                    return response
+
+                # A transient quota/server response gets one short retry.
+                if response.status_code == 429 or response.status_code in (500, 502, 503, 504):
+                    retry_after = response.headers.get("retry-after", "1")
+                    try:
+                        delay = min(float(retry_after), 3.0)
+                    except (TypeError, ValueError):
+                        delay = 1.0
+                    time.sleep(delay if attempt == 0 else 1.5)
+                    continue
+
+                # If a model/parameter is rejected, try the next supported model.
+                break
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt == 0:
+                    time.sleep(0.7)
+                    continue
+                break
+
+    if last_response is not None:
+        return last_response
+    if last_error:
+        raise last_error
+    raise RuntimeError("No compatible Groq model is available")
 
 def _error_detail(resp):
     try:
@@ -536,7 +597,14 @@ def _normal_answer(history,user_message,doc_context=None,web_context=None,web_so
                 return {"answer":_fallback_document_answer(user_message,doc_context),"used_web":False,"sources":[],"answer_mode":"fallback"}
             if web_context:
                 return {"answer":"I found web evidence, but the AI summary is temporarily busy.\\n\\n"+web_context[:1800],"used_web":True,"sources":web_sources or [],"answer_mode":"fallback"}
-        return {"answer":"I couldn't generate the AI answer right now. Please try again in a moment.","used_web":bool(web_context),"sources":web_sources or []}
+        detail = _error_detail(resp) if resp is not None else ""
+        if resp is not None and resp.status_code in (401, 403):
+            answer = "AI service authentication needs attention. Please verify the GROQ_API_KEY in the deployment settings, then redeploy RAGORA."
+        elif resp is not None and resp.status_code == 413:
+            answer = "This request is too large for the AI service. Try a shorter question or ask about a smaller document section."
+        else:
+            answer = "The AI service is temporarily busy. Your message is safe — please try Send again in a moment."
+        return {"answer":answer,"used_web":bool(web_context),"sources":web_sources or [],"answer_mode":"fallback","error_detail":detail[:180]}
     except requests.RequestException:
         if doc_context:
             return {"answer":_fallback_document_answer(user_message,doc_context),"used_web":False,"sources":[],"answer_mode":"fallback"}
