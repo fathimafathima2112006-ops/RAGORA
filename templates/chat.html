@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#f6f8fc"><link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
-<title>RAGORA · AI Knowledge Platform</title><link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v='20260923pro2') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/ux_patch.css', v='20260923pro2') }}">
+<title>RAGORA · AI Knowledge Platform</title><link rel="stylesheet" href="{{ url_for('static', filename='css/style.css', v='20260923finalfix') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/ux_patch.css', v='20260923finalfix') }}">
 </head>
 <body class="theme-light app-page">
 <div class="app-bg" aria-hidden="true"><div class="aurora a1"></div><div class="aurora a2"></div><div class="bg-grid"></div></div>
@@ -27,7 +27,17 @@
     <button class="nav-item" data-view="settings"><span>⚙</span><b>Settings</b></button>
   </nav>
   <div class="sidebar-spacer"></div>
-  <div class="profile"><img src="{{ picture }}" referrerpolicy="no-referrer" alt=""><div><strong>{{ name }}</strong><span>Signed in</span></div><a href="{{ url_for('logout') }}" class="icon-btn" title="Sign out">↪</a></div>
+  <div class="profile-account">
+    <div class="profile-account-head"><span class="profile-google-dot">G</span><span>Google account</span></div>
+    <div class="profile-card">
+      <div class="profile-avatar-wrap">
+        <img class="profile-avatar-img" src="{{ picture }}" referrerpolicy="no-referrer" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='grid'">
+        <span class="profile-avatar-fallback">{{ (name or 'R')[:1]|upper }}</span>
+      </div>
+      <div class="profile-copy"><strong>{{ name or 'RAGORA user' }}</strong><span>Signed in with Google</span></div>
+    </div>
+    <a href="{{ url_for('logout') }}" class="logout-btn"><span>↪</span><b>Log out</b></a>
+  </div>
 </aside>
 <div id="sidebarOverlay" class="sidebar-overlay"></div>
 <main class="workspace">
@@ -37,5 +47,5 @@
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <input id="fileInput" type="file" hidden multiple accept=".pdf,.docx,.pptx,.txt,.md,.csv,.xlsx,.json,.py,.js,.ts,.java,.c,.cpp,.html,.css,.sql">
 <script>window.RAGORA_USER={name:{{ name|tojson }},picture:{{ picture|tojson }}};</script>
-<script src="{{ url_for('static', filename='js/chat.js', v='20260923pro2') }}"></script>
+<script src="{{ url_for('static', filename='js/chat.js', v='20260923finalfix') }}"></script>
 </body></html>
