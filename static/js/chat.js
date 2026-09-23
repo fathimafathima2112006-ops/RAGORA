@@ -188,3 +188,46 @@ async function runRetrieval(){
 function applyTheme(mode){const light=mode==='light';document.body.classList.toggle('theme-light',light);document.body.classList.toggle('theme-dark',!light);localStorage.setItem('ragora-theme',light?'light':'dark');const b=el('themeToggle');if(b){b.textContent=light?'☾':'☀';b.title=light?'Switch to dark mode':'Switch to light mode';b.setAttribute('aria-label',b.title)}}
 function theme(){applyTheme(document.body.classList.contains('theme-light')?'dark':'light')}
 nav();el('themeToggle').onclick=theme;el('brandHome').onclick=()=>renderView('chat');el('topBrand').onclick=()=>renderView('chat');el('newChatBtn').onclick=createNewChat;el('openSidebar').onclick=()=>el('sidebar').classList.add('open');el('closeSidebar').onclick=()=>el('sidebar').classList.remove('open');el('sidebarOverlay').onclick=()=>el('sidebar').classList.remove('open');document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();createNewChat()}});applyTheme(localStorage.getItem('ragora-theme')||'light');renderView('chat');
+
+/* RAGORA FX — lightweight, dependency-free motion layer.
+   Only runs on pointer devices that haven't asked for reduced motion,
+   and only touches transform/CSS custom properties (GPU-friendly). */
+(function(){
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  if (reduce || coarse) return;
+
+  var TILT_SELECTOR = '.panel,.metric-card,.settings-card,.ra-login-card';
+  var active = null;
+
+  function onMove(e){
+    var target = e.target.closest ? e.target.closest(TILT_SELECTOR) : null;
+    if (target !== active) {
+      if (active) reset(active);
+      active = target;
+    }
+    if (!target) return;
+    var r = target.getBoundingClientRect();
+    var px = (e.clientX - r.left) / r.width;   // 0..1
+    var py = (e.clientY - r.top) / r.height;   // 0..1
+    var maxDeg = 4.5;
+    var ry = (px - 0.5) * maxDeg * 2;
+    var rx = -(py - 0.5) * maxDeg * 2;
+    target.setAttribute('data-tilt', '');
+    target.style.setProperty('--rx', rx.toFixed(2) + 'deg');
+    target.style.setProperty('--ry', ry.toFixed(2) + 'deg');
+  }
+
+  function reset(el){
+    el.style.setProperty('--rx', '0deg');
+    el.style.setProperty('--ry', '0deg');
+  }
+
+  function onLeave(){
+    if (active) reset(active);
+    active = null;
+  }
+
+  document.addEventListener('mousemove', onMove, { passive: true });
+  document.addEventListener('mouseleave', onLeave, { passive: true });
+})();
