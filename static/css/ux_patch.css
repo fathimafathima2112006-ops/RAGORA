@@ -167,3 +167,10 @@ body.theme-light .chat-main-full{background:#f4f7fc}.theme-light .chat-ambient{b
 .theme-light .profile-account{background:linear-gradient(180deg,rgba(255,255,255,.5),rgba(235,241,255,.72));border-top-color:#e2e7ef}.theme-light .profile-card,.theme-light .logout-btn{background:rgba(255,255,255,.72);border-color:#dce3ed}.theme-light .profile-account-head{color:#7c8799}
 @media(max-width:760px){.profile-account{padding-bottom:12px}.ambient-grid{background-size:32px 32px}.ambient-stars{right:8%;top:10%}.chat-main-full .messages{padding-left:16px;padding-right:16px}.chat-main-full .composer-area{padding-left:12px;padding-right:12px}}
 @media(prefers-reduced-motion:reduce){.ambient-orb,.ambient-grid,.ambient-stars,.chat-main-full .welcome-core,.chat-main-full .orbit{animation:none!important}}
+
+
+/* RAGORA multilingual answer reader */
+.speak-btn{min-width:72px;transition:transform .18s ease,box-shadow .18s ease,background .18s ease}
+.speak-btn:hover{transform:translateY(-1px)}
+.speak-btn.speaking{box-shadow:0 0 0 3px rgba(91,156,255,.16),0 8px 22px rgba(30,90,180,.16)}
+@media (max-width:640px){.speak-btn{min-width:66px}.msg-meta{gap:5px}}
