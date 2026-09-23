@@ -14,13 +14,42 @@ except ImportError:
     SKLEARN_OK = False
 
 
-# Pin all requests to the supported, configured model. A models-list lookup on
-# every cold start used to select unrelated models and hide key/network failures.
+# Groq model compatibility (Groq retired Llama 3.1 8B on 2026-08-16).
+# We resolve the active model from the account when possible so stale .env files
+# cannot keep the app pinned to a retired model.
+_MODEL_CACHE = {"model": "openai/gpt-oss-20b", "expires": 0.0}
+
+# Never select the 120B model for this app: the user's current org limit is 8K TPM,
+# and stale .env values were previously overriding the intended 20B model.
 _PRIMARY_MODEL = "openai/gpt-oss-20b"
 _WEB_MODEL = "openai/gpt-oss-20b"
+_BLOCKED_MODELS = {"openai/gpt-oss-120b", "llama-3.1-8b-instant"}
 
 def _resolve_llm_model(force_refresh=False):
-    return _PRIMARY_MODEL
+    import time
+    now = time.time()
+    if not force_refresh and _MODEL_CACHE["expires"] > now:
+        return _MODEL_CACHE["model"]
+    chosen = _PRIMARY_MODEL
+    if Config.LLM_API_KEY:
+        try:
+            r = requests.get(
+                Config.GROQ_BASE_URL.rstrip("/") + "/models",
+                headers={"Authorization": f"Bearer {Config.LLM_API_KEY}"},
+                timeout=5,
+            )
+            if r.ok:
+                ids = {str(x.get("id")) for x in (r.json().get("data") or []) if isinstance(x, dict) and x.get("id")}
+                if _PRIMARY_MODEL not in ids:
+                    # Pick a small compatible text model, never 120B.
+                    for candidate in ("qwen/qwen3.8-27b", "qwen/qwen3.6-27b"):
+                        if candidate in ids:
+                            chosen = candidate
+                            break
+        except Exception:
+            pass
+    _MODEL_CACHE.update({"model": chosen, "expires": now + 300})
+    return chosen
 
 def _is_compound_model(model=None):
     # Retained as a compatibility hook for older callers; Compound is disabled.
@@ -504,29 +533,14 @@ def _normal_answer(history,user_message,doc_context=None,web_context=None,web_so
                 }
         if _rate_limited(resp) or resp.status_code in (413,500,502,503,504):
             if doc_context:
-                return {"answer":_fallback_document_answer(user_message,doc_context),"used_web":False,"sources":[],"answer_mode":"fallback","error_code":f"groq_{resp.status_code}"}
+                return {"answer":_fallback_document_answer(user_message,doc_context),"used_web":False,"sources":[],"answer_mode":"fallback"}
             if web_context:
-                return {"answer":"I found web evidence, but the AI summary is temporarily busy.\\n\\n"+web_context[:1800],"used_web":True,"sources":web_sources or [],"answer_mode":"fallback","error_code":f"groq_{resp.status_code}"}
-        if resp.status_code == 401 or resp.status_code == 403:
-            message="AI service authentication failed. In Vercel, set a valid GROQ_API_KEY for Production, then redeploy."
-        elif resp.status_code == 429:
-            message="The Groq account is rate limited or out of quota. Check its billing and rate limits, then retry."
-        elif resp.status_code == 400:
-            message="Groq rejected the request for openai/gpt-oss-20b. Check the model access and request limits in the Groq console."
-        elif resp.status_code >= 500:
-            message="Groq is temporarily unavailable. Retry in a minute; if it persists, check status.groq.com."
-        else:
-            message=f"The AI request was rejected (HTTP {resp.status_code}). Check the Groq API key, model access, and Vercel function logs."
-        return {"answer":message,"used_web":bool(web_context),"sources":web_sources or [],"answer_mode":"error","error_code":f"groq_{resp.status_code}"}
-    except requests.Timeout:
-        message="The AI request timed out. Retry with a shorter question; if this repeats, check the Vercel function timeout and Groq availability."
-        if doc_context:
-            return {"answer":_fallback_document_answer(user_message,doc_context),"used_web":False,"sources":[],"answer_mode":"fallback"}
-        return {"answer":message,"used_web":bool(web_context),"sources":web_sources or [],"answer_mode":"error","error_code":"groq_timeout"}
+                return {"answer":"I found web evidence, but the AI summary is temporarily busy.\\n\\n"+web_context[:1800],"used_web":True,"sources":web_sources or [],"answer_mode":"fallback"}
+        return {"answer":"I couldn't generate the AI answer right now. Please try again in a moment.","used_web":bool(web_context),"sources":web_sources or []}
     except requests.RequestException:
         if doc_context:
             return {"answer":_fallback_document_answer(user_message,doc_context),"used_web":False,"sources":[],"answer_mode":"fallback"}
-        return {"answer":"Could not connect to Groq. Check the Vercel function logs, GROQ_API_KEY, and outbound network access.","used_web":bool(web_context),"sources":web_sources or [],"answer_mode":"error","error_code":"groq_connection"}
+        return {"answer":"The AI service is temporarily unavailable. Please try again shortly.","used_web":bool(web_context),"sources":web_sources or []}
 
 def _is_casual_chat(user_message):
     text=_normalize(user_message).strip()
@@ -546,7 +560,7 @@ def _needs_web_search(user_message):
 
 def generate_answer(history,user_message,doc_context=None,mode="auto"):
     if not Config.LLM_API_KEY:
-        return {"answer":"GROQ_API_KEY is missing. Add it in Vercel → Project Settings → Environment Variables for Production, then redeploy.","used_web":False,"sources":[],"answer_mode":"error","error_code":"groq_missing_key"}
+        return {"answer":"Groq API key configure pannala. .env-la GROQ_API_KEY add pannunga.","used_web":False,"sources":[]}
     if _is_casual_chat(user_message):
         return _normal_answer(history,user_message,None,mode=mode)
 

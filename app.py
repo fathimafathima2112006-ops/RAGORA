@@ -203,7 +203,7 @@ def logout():
 # ---------------- Main ----------------
 @app.route("/health")
 def health():
-    return jsonify({"ok": True, "service": "RAGORA", "groq_configured": bool(Config.GROQ_API_KEY), "model": "openai/gpt-oss-20b"})
+    return jsonify({"ok": True, "service": "RAGORA", "groq_configured": bool(Config.GROQ_API_KEY)})
 
 
 @app.route("/")
@@ -450,13 +450,12 @@ def _answer_for_conversation(conv_id, user_id, user_message, mode="auto"):
             mode=mode
         )
     except Exception:
-        app.logger.exception("Answer generation failed")
         fallback=(
             rag_engine._fallback_document_answer(user_message,doc_context)
             if doc_context
-            else "RAGORA hit an AI backend error. Check the Vercel Function Logs for this request; the prompt remains in this chat."
+            else "I’m temporarily unable to reach the AI service. Please try again in a moment."
         )
-        result={"answer":fallback,"used_web":False,"sources":[],"answer_mode":"fallback","error_code":"answer_generation_error"}
+        result={"answer":fallback,"used_web":False,"sources":[],"answer_mode":"fallback"}
 
     result["elapsed_ms"]=round((time.perf_counter()-started)*1000)
     result["match_percent"]=match_percent
@@ -514,7 +513,6 @@ def api_chat():
         "knowledge_chunks": result.get("knowledge_chunks", 0),
         "answer_mode": result.get("answer_mode", "concise"),
         "mode": result.get("mode", mode),
-        "error_code": result.get("error_code"),
     })
 
 
