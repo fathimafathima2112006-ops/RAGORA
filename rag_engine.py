@@ -22,7 +22,7 @@ _MODEL_CACHE = {"model": "openai/gpt-oss-20b", "expires": 0.0}
 # Never select the 120B model for this app: the user's current org limit is 8K TPM,
 # and stale .env values were previously overriding the intended 20B model.
 _PRIMARY_MODEL = "openai/gpt-oss-20b"
-_WEB_MODEL = "groq/compound-mini"
+_WEB_MODEL = "openai/gpt-oss-20b"
 _BLOCKED_MODELS = {"openai/gpt-oss-120b", "llama-3.1-8b-instant"}
 
 def _resolve_llm_model(force_refresh=False):
@@ -52,7 +52,8 @@ def _resolve_llm_model(force_refresh=False):
     return chosen
 
 def _is_compound_model(model=None):
-    return (model or Config.WEB_MODEL) in {"groq/compound", "groq/compound-mini"}
+    # Retained as a compatibility hook for older callers; Compound is disabled.
+    return False
 
 
 # ----------------------------------------------------------------------
@@ -65,6 +66,8 @@ def extract_text(filepath, ext):
             return _extract_pdf(filepath)
         if ext == "docx":
             return _extract_docx(filepath)
+        if ext == "pptx":
+            return _extract_pptx(filepath)
         if ext == "csv":
             return _extract_csv(filepath)
         if ext == "xlsx":
@@ -99,6 +102,21 @@ def _extract_docx(filepath):
             parts.append(" | ".join(cell.text.strip() for cell in row.cells))
     return "\n".join(parts)
 
+
+
+
+def _extract_pptx(filepath):
+    from pptx import Presentation
+    prs = Presentation(filepath)
+    parts = []
+    for slide_no, slide in enumerate(prs.slides, start=1):
+        slide_parts = []
+        for shape in slide.shapes:
+            if hasattr(shape, "text") and shape.text and shape.text.strip():
+                slide_parts.append(shape.text.strip())
+        if slide_parts:
+            parts.append(f"[Slide {slide_no}]\n" + "\n".join(slide_parts))
+    return "\n\n".join(parts)
 
 def _extract_csv(filepath):
     import pandas as pd
@@ -338,6 +356,7 @@ def build_citations(selected):
             "filename": row["filename"],
             "page": int(page_match.group(1)) if page_match else None,
             "snippet": snippet,
+            "text": re.sub(r"\\[Page \\d+\\]", "", text).strip()[:6000],
             "confidence": round(max(0.0, min(1.0, score)) * 100),
         })
     return citations
@@ -357,32 +376,84 @@ def web_search(query, max_results=5):
 # ----------------------------------------------------------------------
 # LLM
 # ----------------------------------------------------------------------
-SYSTEM_PROMPT = """You are RAGORA, a helpful AI knowledge assistant. Answer naturally in the user's Tamil/Tanglish/English style.
-For casual conversation (hello, hi, good morning, thank you, how are you, how was your day, small talk), respond warmly and naturally in 1-3 short sentences; do not browse the web for casual chat. You may say you are here to help, but never pretend to be a human.
-For document questions, use DOCUMENT EVIDENCE only when it actually supports the answer. Do not invent document facts.
-The DOCUMENT EVIDENCE is numbered like [1], [2], [3] in the order given. When a sentence you write is supported by one of those items, add its bracket number right after it. Only cite numbers that were actually given to you.
-If the document evidence does not contain the answer, use web research when the question needs outside/current knowledge. Be concise, direct, and useful.
+SYSTEM_PROMPT = """You are RAGORA, a high-quality document-grounded AI knowledge assistant.
+
+LANGUAGE
+- Match the user's Tamil, Tanglish, or English style naturally.
+- Prefer clear, professional English for technical terms unless the user uses Tamil/Tanglish.
+
+ANSWER QUALITY
+- Answer the question directly first.
+- Use headings, bullets, numbered steps, examples, tables, formulas, and code when useful.
+- Never invent facts that are not supported by the supplied document evidence.
+- When document evidence supports a claim, cite it as [1], [2], etc.
+- If evidence is insufficient, say so clearly and use web research only for questions that need outside/current knowledge.
+- Distinguish document facts from general knowledge.
+- For simple questions, stay concise.
+- If the user asks for detailed/full/deep/step-by-step explanation, give a substantially more complete answer with context, reasoning, examples, limitations, and a short takeaway.
+
+DOCUMENT EVIDENCE
+The evidence is numbered [1], [2], [3] in the exact order provided. Only use citation numbers that exist.
 """
 
-def build_messages(history, user_message, doc_context=None):
-    # Keep the entire request intentionally tiny. This is critical for the 8K TPM org limit.
-    messages = [{"role":"system","content":SYSTEM_PROMPT}]
-    for m in history[-2:]:
-        c=(m.get("content") or "").strip()[:180]
+def _is_detailed_request(user_message):
+    t=_normalize(user_message)
+    terms=(
+        "detail","detailed","in detail","full explanation","full details",
+        "deep explanation","deeply","elaborate","thorough","thoroughly",
+        "step by step","step-by-step","complete explanation","explain fully",
+        "more explanation","more details","விரிவாக","முழுமையாக","விளக்கமாக",
+        "detail ah","detailed ah","full ah","step by step ah"
+    )
+    return any(x in t for x in terms)
+
+def _is_document_wide_request(user_message):
+    t=_normalize(user_message)
+    terms=("summarize all","summary of all","entire document","whole document",
+           "complete document","summarize this document","summarize the document",
+           "all documents","entire knowledge base","full document","document summary",
+           "முழு document","முழு டாக்குமெண்ட்","அனைத்து documents")
+    return any(x in t for x in terms)
+
+def build_messages(history, user_message, doc_context=None, mode="auto"):
+    detailed=_is_detailed_request(user_message) or mode in {"deep", "study", "research"}
+    mode_instructions={
+        "auto":"Use the most natural answer format for the question.",
+        "deep":"Give a deep, structured explanation. Include context, reasoning, examples, limitations, and a concise takeaway.",
+        "study":"Teach like a tutor. Explain concepts clearly, use simple examples, key points, and finish with 3 quick revision points.",
+        "summary":"Summarize only the supplied evidence. Start with a 2-3 sentence overview, then key points, findings, and important details.",
+        "quiz":"Create a useful quiz from the supplied evidence. Use a mix of conceptual and factual questions and provide an answer key at the end.",
+        "flashcards":"Create study flashcards from the supplied evidence. Format as numbered Question / Answer pairs and avoid unsupported facts.",
+        "research":"Give a thorough evidence-first research answer. Separate document evidence from outside/current information and state uncertainty when evidence is insufficient.",
+    }
+    mode_instruction=mode_instructions.get(mode,"Use the most natural answer format for the question.")
+    messages=[{"role":"system","content":SYSTEM_PROMPT}, {"role":"system","content":"RESPONSE MODE: "+mode_instruction}]
+    for m in history[-4:]:
+        c=(m.get("content") or "").strip()[:320]
         if c:
             messages.append({"role":"assistant" if m.get("role")=="assistant" else "user","content":c})
     if doc_context:
-        messages.append({"role":"system","content":"DOCUMENT EVIDENCE:\n"+doc_context[:1800]})
-    messages.append({"role":"user","content":(user_message or "")[:700]})
+        limit=5600 if detailed else 4200
+        messages.append({"role":"system","content":"DOCUMENT EVIDENCE:\n"+doc_context[:limit]})
+    messages.append({"role":"user","content":(user_message or "")[:1800]})
     return messages
 
-def _groq_request(messages, model=None, max_tokens=180, compound=False):
+def _groq_request(messages, model=None, max_tokens=None, compound=False):
     model = model or (_WEB_MODEL if compound else _resolve_llm_model())
-    payload = {"model": model, "messages": messages, "stream": False}
+    if max_tokens is None:
+        max_tokens=Config.MAX_OUTPUT_TOKENS
+    payload={"model":model,"messages":messages,"stream":False}
     if not compound:
-        payload.update({"temperature":0.2,"max_completion_tokens":max_tokens,"reasoning_effort":"low"})
+        payload.update({
+            "temperature":0.2,
+            "max_completion_tokens":max_tokens,
+            "reasoning_effort":"low",
+        })
     headers={"Authorization":f"Bearer {Config.LLM_API_KEY}","Content-Type":"application/json"}
-    return requests.post(Config.GROQ_BASE_URL.rstrip("/")+"/chat/completions",headers=headers,json=payload,timeout=Config.LLM_TIMEOUT)
+    return requests.post(
+        Config.GROQ_BASE_URL.rstrip()+"/chat/completions",
+        headers=headers,json=payload,timeout=Config.LLM_TIMEOUT
+    )
 
 def _error_detail(resp):
     try:
@@ -395,97 +466,113 @@ def _rate_limited(resp):
     return bool(resp is not None and resp.status_code==429)
 
 def _extract_compound_sources(message):
-    sources=[]
-    for tool in (message.get("executed_tools") or []):
-        if not isinstance(tool,dict): continue
-        results=tool.get("search_results") or tool.get("output") or []
-        if isinstance(results,dict): results=results.get("results") or results.get("items") or [results]
-        if not isinstance(results,list): continue
-        for item in results:
-            if isinstance(item,dict):
-                url=item.get("url") or item.get("link"); title=item.get("title") or item.get("name") or url
-                if url and str(url).startswith(("http://","https://")): sources.append({"title":str(title)[:120],"url":url})
-    seen=set(); out=[]
-    for x in sources:
-        if x["url"] not in seen: seen.add(x["url"]); out.append(x)
-    return out[:6]
+    return []
 
 def _compound_web_answer(user_message, history):
-    messages=[{"role":"user","content":f"Answer this using live web search when needed. Be concise and answer in the user's language.\nQuestion: {(user_message or '')[:700]}"}]
-    try:
-        resp=_groq_request(messages,_WEB_MODEL,max_tokens=0,compound=True)
-        if resp.ok:
-            msg=((resp.json().get("choices") or [{}])[0].get("message") or {})
-            answer=(msg.get("content") or "").strip()
-            if answer: return {"answer":answer,"used_web":True,"sources":_extract_compound_sources(msg)}
-        return None
-    except requests.RequestException:
-        return None
+    # Compound models were retired; keep this compatibility function disabled.
+    return None
 
 def _duckduckgo_web_context(query):
     try:
-        r=requests.get("https://api.duckduckgo.com/",params={"q":query[:400],"format":"json","no_html":1,"skip_disambig":1},timeout=6,headers={"User-Agent":"RAGORA/2.0"})
-        if not r.ok: return None,[]
+        r=requests.get(
+            "https://api.duckduckgo.com/",
+            params={"q":query[:500],"format":"json","no_html":1,"skip_disambig":1},
+            timeout=7,headers={"User-Agent":"RAGORA/3.0"}
+        )
+        if not r.ok:return None,[]
         d=r.json(); items=[]
         if d.get("AbstractText"):
             items.append({"title":d.get("Heading") or "Web result","url":d.get("AbstractURL") or "https://duckduckgo.com/","snippet":d["AbstractText"]})
-        for t in (d.get("RelatedTopics") or []):
-            if isinstance(t,dict) and t.get("Text"): items.append({"title":t.get("Text","")[:100],"url":t.get("FirstURL") or "https://duckduckgo.com/","snippet":t.get("Text","")})
-        items=items[:4]
-        if not items:return None,[]
-        context="\n\n".join(f"SOURCE: {x['title']}\nSNIPPET: {x['snippet']}" for x in items)
-        return context,[{"title":x["title"],"url":x["url"]} for x in items]
-    except Exception:return None,[]
+        for topic in (d.get("RelatedTopics") or []):
+            if isinstance(topic,dict) and topic.get("Text"):
+                items.append({"title":topic.get("Text","")[:120],"url":topic.get("FirstURL") or "https://duckduckgo.com/","snippet":topic.get("Text","")})
+            elif isinstance(topic,dict):
+                for item in topic.get("Topics") or []:
+                    if isinstance(item,dict) and item.get("Text"):
+                        items.append({"title":item.get("Text","")[:120],"url":item.get("FirstURL") or "https://duckduckgo.com/","snippet":item.get("Text","")})
+        # Remove duplicates and keep a compact context.
+        out=[]; seen=set()
+        for x in items:
+            u=x.get("url")
+            if u and u not in seen:
+                seen.add(u); out.append(x)
+        out=out[:5]
+        if not out:return None,[]
+        context="\\n\\n".join(
+            f"SOURCE: {x['title']}\\nURL: {x['url']}\\nSNIPPET: {x['snippet']}"
+            for x in out
+        )
+        return context,[{"title":x["title"],"url":x["url"]} for x in out]
+    except Exception:
+        return None,[]
 
 def _fallback_document_answer(user_message, doc_context):
-    # No-error fallback when the 20B TPM bucket is exhausted. Return the most relevant evidence.
-    parts=[p.strip() for p in (doc_context or "").split("\n---\n") if p.strip()]
-    if not parts:return "I couldn't generate the AI answer right now, but no document evidence matched this question."
-    return "Based on the uploaded document:\n\n"+parts[0][:1200]
+    parts=[p.strip() for p in (doc_context or "").split("\\n---\\n") if p.strip()]
+    if not parts:return "I couldn't find enough evidence in the uploaded knowledge base to answer that."
+    detailed=_is_detailed_request(user_message)
+    limit=5000 if detailed else 1600
+    return ("Based on the uploaded document evidence:\\n\\n"+("\\n\\n".join(parts) if detailed else parts[0]))[:limit]
 
-def _normal_answer(history,user_message,doc_context=None,web_context=None,web_sources=None):
-    messages=build_messages(history,user_message,doc_context)
-    if web_context: messages.insert(-1,{"role":"system","content":"WEB EVIDENCE:\n"+web_context[:1800]})
+def _normal_answer(history,user_message,doc_context=None,web_context=None,web_sources=None,mode="auto"):
+    detailed=_is_detailed_request(user_message) or mode in {"deep","study","research"}
+    messages=build_messages(history,user_message,doc_context,mode)
+    if web_context:
+        messages.insert(-1,{"role":"system","content":"WEB EVIDENCE:\\n"+web_context[:3600 if detailed else 2200]})
     try:
-        resp=_groq_request(messages,_resolve_llm_model(),max_tokens=180,compound=False)
+        max_tokens=700 if detailed else 320
+        resp=_groq_request(messages,_resolve_llm_model(),max_tokens=max_tokens,compound=False)
         if resp.ok:
             msg=((resp.json().get("choices") or [{}])[0].get("message") or {})
             answer=(msg.get("content") or "").strip()
-            if answer:return {"answer":answer,"used_web":bool(web_context),"sources":web_sources or []}
-        # Never retry the same 429. A retry would consume the same org TPM bucket again.
+            if answer:
+                return {
+                    "answer":answer,
+                    "used_web":bool(web_context),
+                    "sources":web_sources or [],
+                    "answer_mode":"detailed" if detailed else "concise",
+                }
         if _rate_limited(resp) or resp.status_code in (413,500,502,503,504):
-            if doc_context:return {"answer":_fallback_document_answer(user_message,doc_context),"used_web":False,"sources":[]}
-            if web_context:return {"answer":"Web search found these results, but the AI summary limit is temporarily busy.\n\n"+web_context[:1400],"used_web":True,"sources":web_sources or []}
-        return {"answer":"I couldn't generate the answer right now. Please try again in a moment.","used_web":bool(web_context),"sources":web_sources or []}
+            if doc_context:
+                return {"answer":_fallback_document_answer(user_message,doc_context),"used_web":False,"sources":[],"answer_mode":"fallback"}
+            if web_context:
+                return {"answer":"I found web evidence, but the AI summary is temporarily busy.\\n\\n"+web_context[:1800],"used_web":True,"sources":web_sources or [],"answer_mode":"fallback"}
+        return {"answer":"I couldn't generate the AI answer right now. Please try again in a moment.","used_web":bool(web_context),"sources":web_sources or []}
     except requests.RequestException:
-        if doc_context:return {"answer":_fallback_document_answer(user_message,doc_context),"used_web":False,"sources":[]}
+        if doc_context:
+            return {"answer":_fallback_document_answer(user_message,doc_context),"used_web":False,"sources":[],"answer_mode":"fallback"}
         return {"answer":"The AI service is temporarily unavailable. Please try again shortly.","used_web":bool(web_context),"sources":web_sources or []}
 
 def _is_casual_chat(user_message):
     text=_normalize(user_message).strip()
     if not text:return False
-    casual=("hi","hello","hey","hai","good morning","good afternoon","good evening","good night","thank you","thanks","welcome","how are you","how r u","how was your day","what are you doing","enna panra","enna panreenga","eppadi iruka","eppadi irukeenga","saptiya","sapadu aacha","nandri","vanakkam","ஹாய்","வணக்கம்","நன்றி")
+    casual=("hi","hello","hey","hai","good morning","good afternoon","good evening","good night",
+            "thank you","thanks","welcome","how are you","how r u","what are you doing",
+            "enna panra","enna panreenga","eppadi iruka","eppadi irukeenga","saptiya",
+            "sapadu aacha","nandri","vanakkam","ஹாய்","வணக்கம்","நன்றி")
     return text in casual or any(text.startswith(x+" ") for x in casual)
 
 def _needs_web_search(user_message):
     text=_normalize(user_message)
-    return any(w in text for w in ("latest","today","now","current","recent","news","weather","price","score","schedule","2026","இன்று","இப்போ","தற்போது","நேற்று","நாளை"))
+    return any(w in text for w in (
+        "latest","today","now","current","recent","news","weather","price","score",
+        "schedule","2026","2027","இன்று","இப்போ","தற்போது","நேற்று","நாளை"
+    ))
 
-def generate_answer(history,user_message,doc_context=None):
+def generate_answer(history,user_message,doc_context=None,mode="auto"):
     if not Config.LLM_API_KEY:
         return {"answer":"Groq API key configure pannala. .env-la GROQ_API_KEY add pannunga.","used_web":False,"sources":[]}
-    # Casual chat stays conversational and does not trigger web search.
     if _is_casual_chat(user_message):
-        return _normal_answer(history,user_message,None)
-    # Current/live questions and weak/no document matches use Compound Mini.
-    if not doc_context or _needs_web_search(user_message):
-        web=_compound_web_answer(user_message,history)
-        if web:return web
+        return _normal_answer(history,user_message,None,mode=mode)
+
+    # For current questions, web evidence is added before generation. For normal
+    # knowledge questions, uploaded documents remain the primary source.
+    if _needs_web_search(user_message) or not doc_context:
         web_context,sources=_duckduckgo_web_context(user_message)
         if web_context:
-            return _normal_answer(history,user_message,None,web_context,sources)
-        return _normal_answer(history,user_message,None)
-    return _normal_answer(history,user_message,doc_context)
+            return _normal_answer(history,user_message,doc_context if not _needs_web_search(user_message) else None,web_context,sources,mode)
+        return _normal_answer(history,user_message,doc_context,mode=mode)
+
+    return _normal_answer(history,user_message,doc_context,mode=mode)
 
 def generate_title(first_message):
     text=(first_message or "").strip().replace("\n"," ")

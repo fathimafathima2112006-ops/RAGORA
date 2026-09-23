@@ -52,3 +52,31 @@ Never commit your real `.env` or API credentials.
 ## Production reliability
 
 For the Flask web UI, use a persistent database/storage target in production. Vercel function-local `/tmp` storage is ephemeral and can cause a conversation created in one invocation to be missing in another. If Vercel is used as the public gateway, route API traffic to the persistent Render service (or use a managed database/object store). The UI now self-recovers from stale chat IDs, but durable storage is still required for reliable history and uploaded documents.
+
+
+## RAGORA 3.0 AI experience
+
+- Hybrid TF-IDF + BM25 + RRF retrieval with reranking.
+- Adaptive concise vs detailed answers.
+- Grounded source cards with click-to-open full evidence.
+- Multi-file upload with sequential indexing and progress feedback.
+- PDF, DOCX, PPTX, TXT, Markdown, CSV, XLSX, JSON and common source-code files.
+- Web-aware fallback without the retired Groq Compound models.
+- Mobile-friendly professional workspace and Retrieval Explorer.
+- SQLite WAL/busy-timeout tuning for more reliable concurrent requests.
+
+
+## RAGORA Professional AI 3.5
+
+This build adds a polished AI workspace with:
+
+- Adaptive AI modes: Auto, Deep Think, Study Tutor, Document Summary, Quiz Builder, Flashcards and Research.
+- Grounded hybrid retrieval with TF-IDF, BM25, RRF and lexical reranking.
+- Compact source cards with click-to-open full evidence.
+- Regenerate, copy and lightweight answer feedback controls.
+- Voice input where browser Speech Recognition is available.
+- Drag-and-drop multi-file uploads and sequential processing.
+- Up to 500 MB per file at the application layer (hosting platforms may impose their own request limits).
+- PDF, DOCX, PPTX, TXT, Markdown, CSV, XLSX, JSON and source-code extraction.
+- Mobile-first light professional UI with responsive workspace and Retrieval Explorer.
+- Groq OpenAI-compatible API using `openai/gpt-oss-20b`; no retired Compound model dependency.

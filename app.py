@@ -391,66 +391,83 @@ def api_evaluation_run():
         return jsonify({"error":str(exc)}),400
 
 # ---------------- Chat ----------------
-def _answer_for_conversation(conv_id, user_id, user_message):
-    history = db.list_messages(conv_id)
-    rows = db.get_chunks_for_user(user_id)
-    selected = rag_engine.retrieve_relevant_chunks(user_message, rows, return_scores=True)
-    # Queries such as "summarize the uploaded document" do not contain the
-    # document's vocabulary, so lexical retrieval can be empty. In that case
-    # use a few chunks only for explicit document-intent queries; ordinary
-    # unrelated questions still go to the web path.
+def _answer_for_conversation(conv_id, user_id, user_message, mode="auto"):
+    history=db.list_messages(conv_id)
+    rows=db.get_chunks_for_user(user_id)
+
+    detailed=rag_engine._is_detailed_request(user_message)
+    wide=rag_engine._is_document_wide_request(user_message)
+    top_k=8 if wide else (5 if detailed else min(4, Config.TOP_K_CHUNKS))
+
+    selected=rag_engine.retrieve_relevant_chunks(
+        user_message, rows, top_k=top_k, return_scores=True
+    )
+
     if not selected and rows:
-        q = user_message.lower()
-        document_intent = any(term in q for term in (
-            "document", "uploaded", "upload", "file", "pdf", "notes",
-            "இந்த document", "டாக்குமெண்ட்", "file-la", "document-la",
-            "summarize this", "summary of this", "explain this file"
+        q=rag_engine._normalize(user_message)
+        document_intent=any(term in q for term in (
+            "document","uploaded","upload","file","pdf","notes","knowledge base",
+            "this file","these files","summarize","summary","explain this",
+            "compare","இந்த document","டாக்குமெண்ட்","file-la","document-la"
         ))
         if document_intent:
-            selected = [(row, 0.0) for row in rows[:Config.TOP_K_CHUNKS]]
-    # Keep the prompt deliberately small. This is the main fix for Groq's
-    # 8K tokens/minute / request-size failures when history + RAG context grow.
-    doc_context = None
-    match_percent = 0
-    citations = []
-    if selected:
-        pieces = []
-        used_chars = 0
-        # Number each piece [1], [2]... in the same order build_citations()
-        # uses, so the model's inline citation markers line up with the
-        # source chips the UI renders.
-        for i, (c, score) in enumerate(selected, start=1):
-            if used_chars >= 3200:
-                break
-            remaining = 3200 - used_chars
-            text = c["chunk_text"][:min(850, remaining)]
-            pieces.append(f"[{i}] ({c['filename']})\n{text}")
-            used_chars += len(text)
-        doc_context = "\n\n---\n\n".join(pieces)
-        # This is retrieval match, not a claim that the answer is objectively
-        # correct. It gives the UI a useful, honest percentage indicator.
-        best_score = selected[0][1]
-        match_percent = max(0, min(99, round(best_score * 150)))
-        citations = rag_engine.build_citations(selected)
-        for citation, (row, _score) in zip(citations, selected):
-            citation["chunk_index"] = row.get("chunk_index")
+            # Keep fallback bounded: enough evidence for a useful overview
+            # without blowing the LLM input budget.
+            selected=[(row,0.0) for row in rows[:top_k]]
 
-    started = time.perf_counter()
+    doc_context=None
+    match_percent=0
+    citations=[]
+
+    if selected:
+        pieces=[]
+        used_chars=0
+        per_chunk=1250 if detailed or wide else 900
+        max_chars=7000 if detailed or wide else 4200
+
+        for i,(chunk,score) in enumerate(selected,start=1):
+            if used_chars>=max_chars:
+                break
+            remaining=max_chars-used_chars
+            text=chunk["chunk_text"][:min(per_chunk,remaining)]
+            pieces.append(f"[{i}] ({chunk['filename']})\n{text}")
+            used_chars+=len(text)
+
+        doc_context="\n\n---\n\n".join(pieces)
+        best_score=selected[0][1] if selected else 0
+        match_percent=max(0,min(99,round(best_score*150)))
+        citations=rag_engine.build_citations(selected)
+
+        for citation,(row,_score) in zip(citations,selected):
+            citation["chunk_index"]=row.get("chunk_index")
+
+    started=time.perf_counter()
     try:
-        result = rag_engine.generate_answer(history, user_message[:2000], doc_context)
+        result=rag_engine.generate_answer(
+            history,
+            user_message[:2000],
+            doc_context,
+            mode=mode
+        )
     except Exception:
-        # Never leak a provider/runtime exception into the chat surface.
-        # The document path can still provide a grounded fallback answer.
-        fallback = rag_engine._fallback_document_answer(user_message, doc_context) if doc_context else "I’m temporarily unable to reach the AI service. Please try again in a moment."
-        result = {"answer": fallback, "used_web": False, "sources": []}
-    result["elapsed_ms"] = round((time.perf_counter() - started) * 1000)
-    result["match_percent"] = match_percent
-    result["knowledge_docs"] = db.user_document_stats(user_id)["documents"]
-    result["knowledge_chunks"] = db.user_document_stats(user_id)["chunks"]
-    # Only attach document citations when the answer actually used the
-    # document path (not the web-search fallback), so citation chips never
-    # get shown next to a web-sourced answer.
-    result["citations"] = citations if (citations and not result.get("used_web")) else []
+        fallback=(
+            rag_engine._fallback_document_answer(user_message,doc_context)
+            if doc_context
+            else "I’m temporarily unable to reach the AI service. Please try again in a moment."
+        )
+        result={"answer":fallback,"used_web":False,"sources":[],"answer_mode":"fallback"}
+
+    result["elapsed_ms"]=round((time.perf_counter()-started)*1000)
+    result["match_percent"]=match_percent
+    stats=db.user_document_stats(user_id)
+    result["knowledge_docs"]=stats["documents"]
+    result["knowledge_chunks"]=stats["chunks"]
+    result["answer_mode"]=result.get("answer_mode") or (mode if mode != "auto" else ("detailed" if detailed else "concise"))
+    result["mode"]=mode
+
+    # Document citations are shown only when the generated answer used the
+    # uploaded evidence rather than a web-only answer.
+    result["citations"]=citations if (citations and not result.get("used_web")) else []
     return result
 
 
@@ -460,6 +477,9 @@ def api_chat():
     data = request.get_json(silent=True) or {}
     conv_id = data.get("conversation_id")
     message = (data.get("message") or "").strip()
+    mode = str(data.get("mode") or "auto").lower()
+    if mode not in {"auto","deep","study","summary","quiz","flashcards","research"}:
+        mode = "auto"
 
     if not conv_id or not message:
         return jsonify({"error": "conversation_id and message required"}), 400
@@ -473,7 +493,7 @@ def api_chat():
         if not conv:
             return jsonify({"error": "conversation_unavailable", "message": "A new chat session could not be opened."}), 503
 
-    result = _answer_for_conversation(conv_id, session["user_id"], message)
+    result = _answer_for_conversation(conv_id, session["user_id"], message, mode=mode)
     db.add_message(conv_id, "user", message)
     db.add_message(conv_id, "assistant", result["answer"], used_web=int(result["used_web"]))
 
@@ -491,6 +511,8 @@ def api_chat():
         "elapsed_ms": result.get("elapsed_ms", 0),
         "knowledge_docs": result.get("knowledge_docs", 0),
         "knowledge_chunks": result.get("knowledge_chunks", 0),
+        "answer_mode": result.get("answer_mode", "concise"),
+        "mode": result.get("mode", mode),
     })
 
 
@@ -526,6 +548,7 @@ def api_regenerate():
         "elapsed_ms": result.get("elapsed_ms", 0),
         "knowledge_docs": result.get("knowledge_docs", 0),
         "knowledge_chunks": result.get("knowledge_chunks", 0),
+        "answer_mode": result.get("answer_mode", "concise"),
     })
 
 
@@ -574,7 +597,7 @@ def internal_error(_):
 
 @app.errorhandler(413)
 def too_large(_):
-    return jsonify({"error": "File is too large. Maximum size is 25 MB."}), 413
+    return jsonify({"error": "File is too large. Maximum size is 500 MB per file."}), 413
 
 
 if __name__ == "__main__":
