@@ -493,7 +493,26 @@ def api_chat():
         if not conv:
             return jsonify({"error": "conversation_unavailable", "message": "A new chat session could not be opened."}), 503
 
-    result = _answer_for_conversation(conv_id, session["user_id"], message, mode=mode)
+    try:
+        result = _answer_for_conversation(conv_id, session["user_id"], message, mode=mode)
+    except Exception:
+        # Never let an unexpected error (LLM timeout, retrieval crash, etc.)
+        # bubble up as a raw 500 — that is what produces the generic
+        # "trouble reaching the AI service" message on every single turn.
+        # Log the real traceback (visible in Vercel/Render function logs)
+        # and answer with something the user can act on instead.
+        app.logger.exception("chat answer generation failed")
+        result = {
+            "answer": (
+                "RAGORA hit an unexpected server error while generating that answer "
+                "(check the deployment logs for details — this is usually a missing "
+                "GROQ_API_KEY or a timed-out request). Please try again."
+            ),
+            "used_web": False,
+            "sources": [],
+            "citations": [],
+        }
+
     db.add_message(conv_id, "user", message)
     db.add_message(conv_id, "assistant", result["answer"], used_web=int(result["used_web"]))
 
