@@ -6,18 +6,13 @@
 <meta name="theme-color" content="#ffffff">
 <title>RAGORA — Sign in</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/login_upgrade.css') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/ragora_fx.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/login_upgrade.css', v='20260923motionfix1') }}">
 </head>
 <body class="theme-light login-page">
   <main class="ra-login">
     <section class="ra-login-showcase" aria-hidden="true">
       <div class="ra-logo"><span>R</span><strong>RAGORA</strong></div>
-      <div class="rf-globe-wrap" aria-hidden="true">
-        <div class="rf-globe-ring"></div>
-        <div class="rf-globe-ring rf-ring-2"></div>
-        <div class="rf-globe"></div>
-      </div>
+      <div class="ra-world" aria-hidden="true"><div class="ra-world-globe"><span>R</span></div><i class="ra-world-orbit orbit-a"></i><i class="ra-world-orbit orbit-b"></i><i class="ra-world-orbit orbit-c"></i><b class="ra-world-particle particle-a"></b><b class="ra-world-particle particle-b"></b><b class="ra-world-particle particle-c"></b></div>
       <div class="ra-showcase-content">
         <div class="ra-eyebrow"><i></i> AI KNOWLEDGE WORKSPACE</div>
         <h1>Ask your files.<br><em>Understand more.</em></h1>
@@ -78,7 +73,6 @@
       </div>
     </section>
   </main>
-<script src="{{ url_for('static', filename='js/ragora_fx.js') }}"></script>
 <script src="{{ url_for('static', filename='js/login.js') }}"></script>
 </body>
 </html>
