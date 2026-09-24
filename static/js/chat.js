@@ -1,4 +1,4 @@
-const state={currentConversationId:null,view:'chat',docs:[],conversations:[],lastRetrieval:null,activeRequest:null,lastUserPrompt:'',lastMode:'auto'};
+const state={currentConversationId:null,view:'chat',docs:[],conversations:[],lastRetrieval:null};
 const el=id=>document.getElementById(id); const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); const attr=esc;
 function toast(m,k='ok'){const t=el('toast');t.textContent=m;t.className=`toast show ${k}`;clearTimeout(toast.t);toast.t=setTimeout(()=>t.className='toast',3200)}
 async function api(url,opt={}){
@@ -22,56 +22,13 @@ function empty(title,text,action=''){return `<div class="empty-state"><div class
 async function loadDocs(){state.docs=await api('/api/documents');return state.docs}
 async function loadConversations(){state.conversations=await api('/api/conversations');return state.conversations}
 async function stats(){const d=await loadDocs();const c=await loadConversations();let chunks=0;try{const s=await api('/api/stats');chunks=s.chunks}catch{}return {documents:d.length,chunks,questions:c.reduce((n,x)=>n+(x.message_count||0),0),conversations:c.length}}
-function chatView(){return `<section class="chat-main chat-main-full"><div id="messages" class="messages"><div id="emptyState" class="welcome"><div class="welcome-visual"><div class="welcome-core">R</div><div class="orbit"></div></div><div class="eyebrow">RAGORA AI KNOWLEDGE ENGINE</div><h1>Ask. Explore.<br><span>Understand.</span></h1><p>One workspace for grounded answers, deep research, study help, document analysis and source-level evidence.</p><div class="quick-grid"><button data-prompt="What is the main objective of this project?"><b>Project objective</b><small>Find the core goal</small></button><button data-prompt="Explain the methodology in simple terms."><b>Explain simply</b><small>Plain-language breakdown</small></button><button data-prompt="What are the key findings?"><b>Key findings</b><small>Surface important results</small></button><button data-prompt="Summarize the uploaded document in detail."><b>Deep summary</b><small>Structured overview</small></button><button data-prompt="Create 10 study flashcards from the uploaded documents."><b>Study cards</b><small>Revision-ready cards</small></button><button data-prompt="Create a 10-question quiz from the uploaded documents, with answers at the end."><b>AI quiz</b><small>Test your understanding</small></button></div><div class="ai-capabilities"><span>✦ Grounded RAG</span><span>⌁ Source evidence</span><span>◉ Adaptive modes</span><span>↗ Web-aware</span><span>◌ Voice input</span><span>⌘ 500 MB files</span></div></div></div><div class="composer-area"><div class="composer-shell"><div class="mode-bar"><label for="answerMode">AI mode</label><select id="answerMode"><option value="auto">Auto</option><option value="deep">Deep Think</option><option value="study">Study Tutor</option><option value="summary">Document Summary</option><option value="quiz">Quiz Builder</option><option value="flashcards">Flashcards</option><option value="research">Research</option></select><button type="button" class="mode-help" id="modeHelp">?</button><span class="mode-status" id="modeStatus">Balanced answers</span></div><form id="chatForm" class="composer"><button type="button" id="uploadBtn" class="attach-btn" title="Upload multiple documents">＋</button><textarea id="chatInput" rows="1" placeholder="Ask RAGORA anything about your knowledge…"></textarea><button type="button" id="voiceBtn" class="attach-btn voice-btn" title="Voice input">⌁</button><button class="send-btn" id="sendBtn" aria-label="Send">↑</button></form><div id="uploadDropZone" class="drop-hint">Drop files here to add them · PDF, DOCX, PPTX, TXT, CSV, XLSX, JSON & code · up to 500 MB each</div><div class="composer-meta"><span>Enter to send · Shift + Enter for new line</span><span id="knowledgeHint">Knowledge base ready</span></div></div></div></section>`}
+function chatView(){return `<section class="chat-main chat-main-full"><div id="messages" class="messages"><div id="emptyState" class="welcome"><div class="welcome-visual"><div class="welcome-core">R</div><div class="orbit"></div></div><div class="eyebrow">RAGORA AI KNOWLEDGE ENGINE</div><h1>Ask. Explore.<br><span>Understand.</span></h1><p>Chat with your knowledge base using hybrid retrieval, grounded citations, smart web fallback and adaptive detailed answers.</p><div class="quick-grid"><button data-prompt="What is the main objective of this project?"><b>Project objective</b><small>Find the core goal</small></button><button data-prompt="Explain the methodology in simple terms."><b>Explain simply</b><small>Plain-language breakdown</small></button><button data-prompt="What are the key findings?"><b>Key findings</b><small>Surface important results</small></button><button data-prompt="Summarize the uploaded document in detail."><b>Deep summary</b><small>Detailed grounded overview</small></button><button data-prompt="Create 10 study flashcards from the uploaded documents."><b>Study cards</b><small>Turn knowledge into revision cards</small></button><button data-prompt="Create a 10-question quiz from the uploaded documents, with answers at the end."><b>AI quiz</b><small>Test your understanding</small></button></div><div class="ai-capabilities"><span>✦ Grounded RAG</span><span>⌁ Source evidence</span><span>◉ Adaptive answers</span><span>↗ Web-aware</span></div></div></div><div class="composer-area"><div class="composer-shell"><form id="chatForm" class="composer"><button type="button" id="uploadBtn" class="attach-btn" title="Upload multiple documents">＋</button><textarea id="chatInput" rows="1" placeholder="Ask RAGORA anything about your knowledge…"></textarea><button class="send-btn" id="sendBtn" aria-label="Send">↑</button></form><div class="composer-meta"><span>Enter to send · Shift + Enter for new line</span><span id="knowledgeHint">Knowledge base ready</span></div></div></div></section>`}
 async function renderChat(){el('appView').innerHTML=chatView();await loadDocs().catch(()=>[]);bindChat();}
 function renderConversationList(){const box=el('conversationList');if(!box)return;box.innerHTML=state.conversations.length?state.conversations.map(c=>`<button class="conv-item ${c.id===state.currentConversationId?'active':''}" data-id="${c.id}"><span>${esc(c.title)}</span><small>${esc(c.created_at||'')}</small></button>`).join(''):empty('No conversations','Start a new grounded chat.','');box.querySelectorAll('[data-id]').forEach(b=>b.onclick=()=>openConversation(+b.dataset.id));}
 async function createNewChat(){const d=await api('/api/conversations',{method:'POST'});state.currentConversationId=d.id;await loadConversations();renderConversationList();el('chatInput')?.focus();return d.id}
 async function openConversation(id){state.currentConversationId=id;const msgs=await api(`/api/conversations/${id}/messages`);el('emptyState')?.remove();el('messages').innerHTML='';msgs.forEach(m=>renderMessage(m.role,m.content,!!m.used_web,[],{},[]));renderConversationList();}
 function latexToReadable(s){return s.replace(/\\text\{([^}]*)\}/g,'$1').replace(/\\left/g,'').replace(/\\right/g,'').replace(/\\sum_\{?([^}\s]+)\}?/g,'Σ<sub>$1</sub>').replace(/\\phi/g,'φ').replace(/\\sigma/g,'σ').replace(/\\alpha/g,'α').replace(/\\beta/g,'β').replace(/\\lambda/g,'λ').replace(/\\mu/g,'μ').replace(/\\sqrt\{([^}]*)\}/g,'√($1)').replace(/\\exp/g,'exp').replace(/\\times/g,'×').replace(/\\cdot/g,'·').replace(/\\leq/g,'≤').replace(/\\geq/g,'≥').replace(/\\in/g,'∈').replace(/\\to/g,'→').replace(/\\approx/g,'≈').replace(/\^\{([^}]*)\}/g,'<sup>$1</sup>').replace(/_\{([^}]*)\}/g,'<sub>$1</sub>').replace(/\^([A-Za-z0-9]+)/g,'<sup>$1</sup>').replace(/_([A-Za-z0-9]+)/g,'<sub>$1</sub>')}
 function renderMarkdown(text){let s=esc(text);s=s.replace(/```([\s\S]*?)```/g,'<pre><code>$1</code></pre>');s=latexToReadable(s).replace(/\\\((.*?)\\\)/g,'<span class="math">$1</span>').replace(/\\\[([\s\S]*?)\\\]/g,'<div class="math-block">$1</div>');s=s.replace(/^### (.*)$/gm,'<h4>$1</h4>').replace(/^## (.*)$/gm,'<h3>$1</h3>').replace(/^# (.*)$/gm,'<h2>$1</h2>').replace(/^(\d+)\. (.*)$/gm,'<div class="answer-step"><b>$1.</b> $2</div>').replace(/^- (.*)$/gm,'<div class="answer-bullet">• $1</div>').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/`([^`]+)`/g,'<code>$1</code>');return s.replace(/\n/g,'<br>')}
-
-function detectSpeechLocale(text){
-  const s=String(text||'');
-  const tamil=(s.match(/[\u0B80-\u0BFF]/g)||[]).length;
-  const letters=(s.match(/[A-Za-z\u0B80-\u0BFF]/g)||[]).length;
-  if(tamil>=2 && (tamil/Math.max(1,letters))>=0.12) return 'ta-IN';
-  return 'en-IN';
-}
-function getSpeechVoice(locale){
-  if(!('speechSynthesis' in window)) return null;
-  const voices=window.speechSynthesis.getVoices?.()||[];
-  const exact=voices.find(v=>(v.lang||'').toLowerCase()===locale.toLowerCase());
-  if(exact) return exact;
-  const base=locale.split('-')[0].toLowerCase();
-  return voices.find(v=>(v.lang||'').toLowerCase().startsWith(base))||null;
-}
-function speakAnswer(text, button){
-  if(!('speechSynthesis' in window)){
-    toast('Answer voice is not supported in this browser','error'); return;
-  }
-  const clean=String(text||'').replace(/[*_#`>|]/g,' ').replace(/\[(.*?)\]\((.*?)\)/g,'$1').replace(/\s+/g,' ').trim();
-  if(!clean) return;
-  if(window.speechSynthesis.speaking) window.speechSynthesis.cancel();
-  const locale=detectSpeechLocale(clean);
-  const u=new SpeechSynthesisUtterance(clean);
-  u.lang=locale;
-  u.rate=0.94;
-  u.pitch=1;
-  const voice=getSpeechVoice(locale);
-  if(voice) u.voice=voice;
-  if(button){
-    button.classList.add('speaking');
-    button.textContent='■ Stop';
-  }
-  u.onend=()=>{ if(button){button.classList.remove('speaking');button.textContent='🔊 Read'} };
-  u.onerror=()=>{ if(button){button.classList.remove('speaking');button.textContent='🔊 Read'} };
-  window.speechSynthesis.speak(u);
-}
-function stopAnswerVoice(button){
-  if('speechSynthesis' in window) window.speechSynthesis.cancel();
-  if(button){button.classList.remove('speaking');button.textContent='🔊 Read'}
-}
-
 function renderMessage(role,content,usedWeb=false,sources=[],meta={},citations=[]){
   const row=document.createElement('div');
   row.className=`msg-row ${role}`;
@@ -93,17 +50,10 @@ function renderMessage(role,content,usedWeb=false,sources=[],meta={},citations=[
       ${meta.match_percent?`<span class="match-tag">Retrieval ${meta.match_percent}%</span>`:''}
       ${meta.elapsed_ms?`<span class="time-tag">${(meta.elapsed_ms/1000).toFixed(1)}s</span>`:''}
       ${meta.answer_mode==='detailed'?'<span class="detail-tag">Detailed</span>':''}
-      <button class="copy-btn">Copy</button><button class="copy-btn speak-btn" title="Read this answer aloud">🔊 Read</button><button class="copy-btn regenerate-btn">Regenerate</button><button class="feedback-btn" data-vote="up" title="Helpful">♡</button><button class="feedback-btn" data-vote="down" title="Not helpful">♧</button>`;
+      <button class="copy-btn">Copy</button>`;
     metaRow.querySelector('.copy-btn').onclick=()=>{
       navigator.clipboard?.writeText(content).then(()=>toast('Answer copied'));
     };
-    const speakBtn=metaRow.querySelector('.speak-btn');
-    if(speakBtn) speakBtn.onclick=()=>{
-      if(speakBtn.classList.contains('speaking')) stopAnswerVoice(speakBtn);
-      else speakAnswer(content,speakBtn);
-    };
-    metaRow.querySelector('.regenerate-btn')?.addEventListener('click',()=>regenerateLast());
-    metaRow.querySelectorAll('.feedback-btn').forEach(b=>b.onclick=()=>{b.classList.add('selected');toast(b.dataset.vote==='up'?'Thanks — marked helpful':'Thanks — feedback noted','info');localStorage.setItem('ragora:lastFeedback',b.dataset.vote)});
     wrap.appendChild(metaRow);
 
     if(citations?.length){
@@ -170,29 +120,44 @@ function openSource(c){
   m.addEventListener('click',e=>{if(e.target===m)m.remove()});
 }
 
-function bindChat(){document.querySelectorAll('[data-prompt]').forEach(b=>b.onclick=()=>{const i=el('chatInput');i.value=b.dataset.prompt;i.focus();i.dispatchEvent(new Event('input'));});const i=el('chatInput');i.oninput=()=>{i.style.height='auto';i.style.height=Math.min(i.scrollHeight,180)+'px'};i.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();el('chatForm').requestSubmit()}};el('uploadBtn').onclick=()=>el('fileInput').click();el('chatForm').onsubmit=sendChat;el('knowledgeHint').textContent=state.docs.length?`${state.docs.length} documents indexed`:'Add documents or ask a general question';const mode=el('answerMode'),status=el('modeStatus');const labels={auto:'Balanced answers',deep:'Long-form reasoning',study:'Tutor-style learning',summary:'Evidence summary',quiz:'Quiz generation',flashcards:'Revision cards',research:'Research mode'};mode?.addEventListener('change',()=>{state.lastMode=mode.value;if(status)status.textContent=labels[mode.value]||'Balanced answers'});el('modeHelp')?.addEventListener('click',()=>toast('Deep Think = detailed reasoning · Study = tutor · Summary / Quiz / Flashcards = document tools · Research = evidence-first research.','info'));const voice=el('voiceBtn');if(voice){const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR){voice.disabled=true}else voice.onclick=()=>{const r=new SR();r.lang=detectSpeechLocale(i.value||'');r.interimResults=false;r.maxAlternatives=1;r.onstart=()=>{voice.classList.add('recording');toast('Listening…','info')};r.onend=()=>voice.classList.remove('recording');r.onerror=()=>{voice.classList.remove('recording');toast('Voice input failed','error')};r.onresult=e=>{i.value=(i.value?i.value+' ':'')+e.results[0][0].transcript;i.dispatchEvent(new Event('input'));i.focus()};r.start()}}const dz=el('uploadDropZone');if(dz){['dragenter','dragover'].forEach(v=>dz.addEventListener(v,e=>{e.preventDefault();dz.classList.add('dragging')}));['dragleave','drop'].forEach(v=>dz.addEventListener(v,e=>{e.preventDefault();dz.classList.remove('dragging')}));dz.addEventListener('drop',e=>handleFiles(Array.from(e.dataTransfer.files||[])))}document.onkeydown=e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();i.focus()}if(e.key==='Escape'&&state.activeRequest)state.activeRequest.abort()};}
-function handleFiles(files){const input=el('fileInput');if(!files.length)return;const dt=new DataTransfer();files.forEach(f=>dt.items.add(f));input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));}
-
-async function sendChat(e){e.preventDefault();const input=el('chatInput'),text=input.value.trim();if(!text)return;const previousId=state.currentConversationId,mode=el('answerMode')?.value||'auto';state.lastUserPrompt=text;state.lastMode=mode;try{if(!state.currentConversationId){const d=await api('/api/conversations',{method:'POST'});state.currentConversationId=d.id}el('emptyState')?.remove();renderMessage('user',text);input.value='';input.style.height='auto';const t=document.createElement('div');t.className='msg-row assistant';t.id='typing';t.innerHTML='<div class="assistant-avatar">R</div><div class="typing-label"><span class="typing-dot"></span> RAGORA is thinking…</div>';el('messages').appendChild(t);el('messages').scrollTop=el('messages').scrollHeight;el('sendBtn').disabled=true;const controller=new AbortController();state.activeRequest=controller;let d;try{d=await api('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({conversation_id:state.currentConversationId,message:text,mode}),signal:controller.signal})}catch(err){if(err.name==='AbortError'){el('typing')?.remove();toast('Generation stopped','info');return}if(err.code!=='not_found')throw err;const fresh=await api('/api/conversations',{method:'POST'});state.currentConversationId=fresh.id;d=await api('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({conversation_id:fresh.id,message:text,mode})});toast('New chat session restored','info')}el('typing')?.remove();state.currentConversationId=d.conversation_id||state.currentConversationId;renderMessage('assistant',d.answer,!!d.used_web,d.sources||[],d,d.citations||[]);loadConversations().then(renderConversationList).catch(()=>{})}catch(err){el('typing')?.remove();if(previousId!==null)state.currentConversationId=previousId;if(err.name!=='AbortError'){
-  const status=Number(err.status||0);
-  const retryable=[429,500,502,503,504].includes(status);
-  if(retryable){
-    toast('AI service is busy — retrying automatically…','info');
-    await new Promise(r=>setTimeout(r,900));
+function bindChat(){document.querySelectorAll('[data-prompt]').forEach(b=>b.onclick=()=>{const i=el('chatInput');i.value=b.dataset.prompt;i.focus()});const i=el('chatInput');i.oninput=()=>{i.style.height='auto';i.style.height=Math.min(i.scrollHeight,180)+'px'};i.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();el('chatForm').requestSubmit()}};el('uploadBtn').onclick=()=>renderView('documents');el('chatForm').onsubmit=sendChat;el('knowledgeHint').textContent=state.docs.length?`${state.docs.length} documents indexed`:'No documents yet';}
+async function sendChat(e){
+  e.preventDefault();
+  const input=el('chatInput'); const text=input.value.trim();
+  if(!text)return;
+  const previousId=state.currentConversationId;
+  try{
+    if(!state.currentConversationId){const d=await api('/api/conversations',{method:'POST'});state.currentConversationId=d.id;}
+    el('emptyState')?.remove(); renderMessage('user',text);
+    input.value=''; input.style.height='auto';
+    const t=document.createElement('div'); t.className='msg-row assistant'; t.id='typing';
+    t.innerHTML='<div class="assistant-avatar">R</div><div class="typing-label"><span class="typing-dot"></span> Searching your knowledge base…</div>';
+    el('messages').appendChild(t); el('messages').scrollTop=el('messages').scrollHeight;
+    let d;
     try{
-      const retry=await api('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({conversation_id:state.currentConversationId,message:text,mode}),signal:state.activeRequest?.signal});
-      state.currentConversationId=retry.conversation_id||state.currentConversationId;
-      renderMessage('assistant',retry.answer,!!retry.used_web,retry.sources||[],retry,retry.citations||[]);
-      loadConversations().then(renderConversationList).catch(()=>{});
-      return;
-    }catch(retryErr){err=retryErr}
+      d=await api('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({conversation_id:state.currentConversationId,message:text})});
+    }catch(err){
+      if(err.code!=='not_found')throw err;
+      // A stale/ephemeral conversation can happen after a deployment restart.
+      // Recover silently by opening a fresh conversation and retrying once.
+      const fresh=await api('/api/conversations',{method:'POST'});
+      state.currentConversationId=fresh.id;
+      d=await api('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({conversation_id:fresh.id,message:text})});
+      toast('New chat session restored','info');
+    }
+    el('typing')?.remove();
+    state.currentConversationId=d.conversation_id||state.currentConversationId;
+    renderMessage('assistant',d.answer,!!d.used_web,d.sources||[],d,d.citations||[]);
+    state.lastRetrieval=d.retrieval||null;
+    loadConversations().then(renderConversationList).catch(()=>{});
+  }catch(err){
+    el('typing')?.remove();
+    // Keep the conversation usable even when a transient network/model issue occurs.
+    if(previousId!==null) state.currentConversationId=previousId;
+    renderMessage('assistant','I’m having trouble reaching the AI service right now. Your message is still here — please try Send again in a moment.');
+    toast('Temporary connection issue — please try again','info');
   }
-  const safeMessage=(err.message&&String(err.message).length<260)?String(err.message):'The AI service is temporarily unavailable. Your message is safe — please try Send again in a moment.';
-  renderMessage('assistant',safeMessage);toast(status===401||status===403?'AI configuration needs attention':'Temporary AI connection issue — please try again','info');
-}}finally{state.activeRequest=null;el('sendBtn').disabled=false}}
-
-async function regenerateLast(){if(!state.currentConversationId)return;try{toast('Regenerating answer…','info');const d=await api('/api/chat/regenerate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({conversation_id:state.currentConversationId})});const rows=el('messages').querySelectorAll('.msg-row.assistant');rows[rows.length-1]?.remove();renderMessage('assistant',d.answer,!!d.used_web,d.sources||[],d,d.citations||[])}catch(err){toast(err.message||'Could not regenerate','error')}}
-
+}
 async function dashboardView(){const s=await stats();return `${layout('Your knowledge, intelligently searchable.','A compact command center for your document-grounded AI workspace.','<button class="btn primary" data-go="chat">Ask a question</button>')}<div class="metrics">${metric('Documents',s.documents,'Indexed files','▤')}${metric('Chunks',s.chunks,'Retrieval units','◈')}${metric('Questions',s.questions,'Conversation messages','?')}${metric('Knowledge Bases','1','Personal workspace','▣')}</div><div class="dashboard-grid"><div class="panel"><div class="panel-title"><span>RECENT DOCUMENTS</span><button class="link-btn" data-go="documents">View all →</button></div>${s.documents?state.docs.slice(0,5).map(d=>`<div class="list-row"><span class="file-badge">${iconFile(d.filename)}</span><div><b>${esc(d.filename)}</b><small>${d.chunk_count||'Indexed'} chunks · Ready</small></div><span class="status ready">Ready</span></div>`).join(''):empty('No documents yet','Build your knowledge base from the Documents page.','<button class="btn secondary" data-go="documents">Upload document</button>')}</div><div class="panel"><div class="panel-title"><span>RAG PIPELINE</span><span class="badge">LIVE</span></div><div class="pipeline-mini">${['Document','Extract','Chunk','Vector score','Top-K','LLM','Citations'].map((x,i)=>`<div><span>${i+1}</span><b>${x}</b></div>`).join('')}</div><p class="panel-note">RAGORA combines TF-IDF similarity, BM25 and keyword signals, then reranks the strongest evidence before generation.</p></div></div>`}
 async function knowledgeView(){await loadDocs();return `${layout('Knowledge Bases','Organize documents into a searchable AI knowledge layer.','<button class="btn primary" id="kbUpload">＋ Upload document</button>')}<div class="searchbar"><input id="docSearch" placeholder="Search knowledge…"><span>${state.docs.length} documents</span></div><div class="kb-card"><div class="kb-icon">R</div><div class="kb-copy"><h3>Personal Knowledge Base</h3><p>All uploaded documents available to your RAG retrieval pipeline.</p><div class="chips"><span>${state.docs.length} documents</span><span>${state.docs.reduce((n,d)=>n+(d.chunk_count||0),0)} chunks</span><span>Hybrid retrieval</span></div></div><button class="btn secondary" data-go="documents">Open</button></div><div id="kbDocs" class="doc-grid">${state.docs.map(d=>docCard(d)).join('')||empty('No documents yet','Upload PDF, DOCX, PPTX, TXT, CSV, XLSX and supported source files to start.','<button class="btn primary" id="kbUpload2">Upload document</button>')}</div>`}
 function docCard(d){return `<article class="doc-card"><div class="doc-card-top"><span class="file-badge large">${iconFile(d.filename)}</span><span class="status ready">Ready</span></div><h3 title="${attr(d.filename)}">${esc(d.filename)}</h3><p>${d.chunk_count??'—'} chunks · ${esc(d.created_at||'')}</p><div class="doc-actions"><button class="btn ghost" data-chunks="${d.id}">Chunks</button><button class="btn danger" data-delete="${d.id}">Delete</button></div></article>`}
@@ -253,11 +218,26 @@ function applyTheme(mode){const light=mode==='light';document.body.classList.tog
 function theme(){applyTheme(document.body.classList.contains('theme-light')?'dark':'light')}
 nav();el('themeToggle').onclick=theme;el('brandHome').onclick=()=>renderView('chat');el('topBrand').onclick=()=>renderView('chat');el('newChatBtn').onclick=createNewChat;el('openSidebar').onclick=()=>el('sidebar').classList.add('open');el('closeSidebar').onclick=()=>el('sidebar').classList.remove('open');el('sidebarOverlay').onclick=()=>el('sidebar').classList.remove('open');document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();createNewChat()}});applyTheme(localStorage.getItem('ragora-theme')||'light');renderView('chat');
 
-(() => {
- const show=m=>{let e=document.querySelector('.rg-ai-status');if(!e){e=document.createElement('div');e.className='rg-ai-status';document.body.appendChild(e)}e.textContent=m;e.classList.add('show');clearTimeout(window.__rg);window.__rg=setTimeout(()=>e.classList.remove('show'),7000)};
- window.RAGORA_showAIStatus=show;
- const nativeFetch=window.fetch;
- window.fetch=async(...a)=>{try{const r=await nativeFetch(...a);if(!r.ok&&r.status>=500)show('AI service is temporarily busy. Your message is safe — please try Send again in a moment.');return r}catch(e){show('AI service connection is temporarily unavailable. Please try Send again in a moment.');throw e}};
-})();
 
-if('speechSynthesis' in window) window.speechSynthesis.addEventListener('voiceschanged',()=>window.speechSynthesis.getVoices());
+/* RAGORA Vercel AI error recovery */
+(() => {
+  const show = (msg) => {
+    let el=document.querySelector('.rg-ai-status');
+    if(!el){ el=document.createElement('div'); el.className='rg-ai-status'; document.body.appendChild(el); }
+    el.textContent=msg; el.classList.add('show');
+    clearTimeout(window.__rgAiStatusTimer);
+    window.__rgAiStatusTimer=setTimeout(()=>el.classList.remove('show'),6500);
+  };
+  window.RAGORA_showAIStatus=show;
+  const nativeFetch=window.fetch;
+  window.fetch=async(...args)=>{
+    try{
+      const res=await nativeFetch(...args);
+      if(!res.ok && res.status>=500) show('AI service is temporarily busy. Your message is safe — please try Send again.');
+      return res;
+    }catch(e){
+      show('AI connection is temporarily unavailable. Please try Send again.');
+      throw e;
+    }
+  };
+})();
