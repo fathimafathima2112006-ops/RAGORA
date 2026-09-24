@@ -8,14 +8,30 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/login_upgrade.css') }}">
 </head>
+
 <body class="theme-light login-page">
+
   <main class="ra-login">
+
     <section class="ra-login-showcase" aria-hidden="true">
-      <div class="ra-logo"><span>R</span><strong>RAGORA</strong></div>
+      <div class="ra-logo">
+        <span>R</span>
+        <strong>RAGORA</strong>
+      </div>
+
       <div class="ra-showcase-content">
         <div class="ra-eyebrow"><i></i> AI KNOWLEDGE WORKSPACE</div>
-        <h1>Ask your files.<br><em>Understand more.</em></h1>
-        <p>One private workspace for documents, research, study, retrieval and voice conversations.</p>
+
+        <h1>
+          Ask your files.<br>
+          <em>Understand more.</em>
+        </h1>
+
+        <p>
+          One private workspace for documents, research, study,
+          retrieval and voice conversations.
+        </p>
+
         <div class="ra-feature-grid">
           <div><b>01</b><span>Document-grounded answers</span></div>
           <div><b>02</b><span>Source evidence & retrieval</span></div>
@@ -23,16 +39,26 @@
           <div><b>04</b><span>Study, research & AI modes</span></div>
         </div>
       </div>
-      <div class="ra-showcase-foot">Private workspace · Your account, your conversations</div>
+
+      <div class="ra-showcase-foot">
+        Private workspace · Your account, your conversations
+      </div>
     </section>
 
     <section class="ra-login-side">
       <div class="ra-login-card">
-        <div class="ra-mobile-brand"><span>R</span><strong>RAGORA</strong></div>
+
+        <div class="ra-mobile-brand">
+          <span>R</span>
+          <strong>RAGORA</strong>
+        </div>
+
         <div class="ra-heading">
           <span class="ra-kicker">WELCOME BACK</span>
           <h2>Sign in to RAGORA</h2>
-          <p>Continue with your Google account to open your personal AI workspace.</p>
+          <p>
+            Continue with your Google account to open your personal AI workspace.
+          </p>
         </div>
 
         {% if error %}
@@ -48,7 +74,7 @@
               <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.6-6 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.6 6.1 29.6 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.7-.4-3.5z"/>
               <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.9 18.9 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.6 6.1 29.6 4 24 4c-7.5 0-14 4.2-17.7 10.7z"/>
               <path fill="#4CAF50" d="M24 44c5.5 0 10.4-1.9 14.3-5.1l-6.6-5.4C29.6 35.4 26.9 36 24 36c-5.2 0-9.6-3.4-11.2-8.1l-6.5 5C9.9 39.6 16.4 44 24 44z"/>
-              <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.2 4.2-11.3 8-1.6 4.6-6 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.6 6.1 29.6 4 24 4c-7.5 0-14 8.9-20 20 0 1.3.1 2.7.4 3.5z"/>
+              <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-6 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.6 6.1 29.6 4 24 4c-7.5 0-14 8.9-20 20 0 1.3.1 2.7.4 3.5z"/>
             </svg>
           </span>
           <span class="ra-google-label">Continue with Google</span>
@@ -63,15 +89,55 @@
         <div class="ra-divider"><span>WHAT YOU GET</span></div>
 
         <div class="ra-benefits">
-          <div><i>✦</i><span><b>Personal chat history</b><small>Your conversations stay tied to your account.</small></span></div>
-          <div><i>▦</i><span><b>Document knowledge base</b><small>Upload files and explore the evidence behind answers.</small></span></div>
-          <div><i>◉</i><span><b>AI + voice workspace</b><small>Use study modes, research, voice input and playback.</small></span></div>
+          <div>
+            <i>✦</i>
+            <span>
+              <b>Personal chat history</b>
+              <small>Your conversations stay tied to your account.</small>
+            </span>
+          </div>
+
+          <div>
+            <i>▦</i>
+            <span>
+              <b>Document knowledge base</b>
+              <small>Upload files and explore the evidence behind answers.</small>
+            </span>
+          </div>
+
+          <div>
+            <i>◉</i>
+            <span>
+              <b>AI + voice workspace</b>
+              <small>Use study modes, research, voice input and playback.</small>
+            </span>
+          </div>
         </div>
 
-        <p class="ra-terms">By continuing, you agree to use RAGORA responsibly.</p>
+        <p class="ra-terms">
+          By continuing, you agree to use RAGORA responsibly.
+        </p>
+
       </div>
     </section>
+
   </main>
+
 <script src="{{ url_for('static', filename='js/login.js') }}"></script>
-<div class="rg-world-stage" aria-hidden="true"><div class="rg-world"><div class="rg-world-core"></div><div class="rg-world-name">RAGORA</div><span class="rg-ring rg-ring-a"><i class="rg-dot rg-dot-a"></i></span><span class="rg-ring rg-ring-b"><i class="rg-dot rg-dot-b"></i></span><span class="rg-ring rg-ring-c"><i class="rg-dot rg-dot-c"></i></span></div><span class="rg-world-particle"></span><span class="rg-world-particle"></span><span class="rg-world-particle"></span><span class="rg-world-particle"></span></div></body>
+
+<div class="rg-world-stage" aria-hidden="true">
+  <div class="rg-world">
+    <div class="rg-world-core"></div>
+    <div class="rg-world-name">RAGORA</div>
+    <span class="rg-ring rg-ring-a"><i class="rg-dot rg-dot-a"></i></span>
+    <span class="rg-ring rg-ring-b"><i class="rg-dot rg-dot-b"></i></span>
+    <span class="rg-ring rg-ring-c"><i class="rg-dot rg-dot-c"></i></span>
+  </div>
+  <span class="rg-world-particle"></span>
+  <span class="rg-world-particle"></span>
+  <span class="rg-world-particle"></span>
+  <span class="rg-world-particle"></span>
+</div>
+
+</body>
 </html>
