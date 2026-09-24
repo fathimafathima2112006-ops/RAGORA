@@ -415,19 +415,9 @@ def _is_document_wide_request(user_message):
            "முழு document","முழு டாக்குமெண்ட்","அனைத்து documents")
     return any(x in t for x in terms)
 
-def build_messages(history, user_message, doc_context=None, mode="auto"):
-    detailed=_is_detailed_request(user_message) or mode in {"deep", "study", "research"}
-    mode_instructions={
-        "auto":"Use the most natural answer format for the question.",
-        "deep":"Give a deep, structured explanation. Include context, reasoning, examples, limitations, and a concise takeaway.",
-        "study":"Teach like a tutor. Explain concepts clearly, use simple examples, key points, and finish with 3 quick revision points.",
-        "summary":"Summarize only the supplied evidence. Start with a 2-3 sentence overview, then key points, findings, and important details.",
-        "quiz":"Create a useful quiz from the supplied evidence. Use a mix of conceptual and factual questions and provide an answer key at the end.",
-        "flashcards":"Create study flashcards from the supplied evidence. Format as numbered Question / Answer pairs and avoid unsupported facts.",
-        "research":"Give a thorough evidence-first research answer. Separate document evidence from outside/current information and state uncertainty when evidence is insufficient.",
-    }
-    mode_instruction=mode_instructions.get(mode,"Use the most natural answer format for the question.")
-    messages=[{"role":"system","content":SYSTEM_PROMPT}, {"role":"system","content":"RESPONSE MODE: "+mode_instruction}]
+def build_messages(history, user_message, doc_context=None):
+    detailed=_is_detailed_request(user_message)
+    messages=[{"role":"system","content":SYSTEM_PROMPT}]
     for m in history[-4:]:
         c=(m.get("content") or "").strip()[:320]
         if c:
@@ -439,82 +429,39 @@ def build_messages(history, user_message, doc_context=None, mode="auto"):
     return messages
 
 def _groq_request(messages, model=None, max_tokens=None, compound=False):
-    """Reliable Groq chat request with a small compatibility retry chain.
-
-    Compound systems were retired, so all normal requests use a supported
-    chat model. GPT-OSS supports reasoning_effort and include_reasoning=False.
-    """
-    if not Config.LLM_API_KEY:
-        raise RuntimeError("GROQ_API_KEY is not configured")
-
-    primary = model or _resolve_llm_model()
-    candidates = []
-    for candidate in (primary, _PRIMARY_MODEL, "qwen/qwen3.8-27b"):
-        if candidate and candidate not in candidates and candidate not in _BLOCKED_MODELS:
-            candidates.append(candidate)
-
+    model = model or (_WEB_MODEL if compound else _resolve_llm_model())
     if max_tokens is None:
-        max_tokens = Config.MAX_OUTPUT_TOKENS
-    max_tokens = max(120, min(int(max_tokens), 480))
-
-    headers = {
-        "Authorization": f"Bearer {Config.LLM_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-    last_response = None
-    last_error = None
-    import time
-
-    for candidate in candidates:
-        payload = {
-            "model": candidate,
-            "messages": messages,
-            "stream": False,
-            "temperature": 0.2,
-            "max_completion_tokens": max_tokens,
-        }
-        if candidate.startswith("openai/gpt-oss"):
-            payload["reasoning_effort"] = "low"
-            payload["include_reasoning"] = False
-
-        for attempt in range(2):
-            try:
-                response = requests.post(
-                    Config.GROQ_BASE_URL.rstrip("/") + "/chat/completions",
-                    headers=headers,
-                    json=payload,
-                    timeout=Config.LLM_TIMEOUT,
-                )
-                last_response = response
-                if response.ok:
-                    _MODEL_CACHE.update({"model": candidate, "expires": time.time() + 300})
-                    return response
-
-                # A transient quota/server response gets one short retry.
-                if response.status_code == 429 or response.status_code in (500, 502, 503, 504):
-                    retry_after = response.headers.get("retry-after", "1")
-                    try:
-                        delay = min(float(retry_after), 3.0)
-                    except (TypeError, ValueError):
-                        delay = 1.0
-                    time.sleep(delay if attempt == 0 else 1.5)
-                    continue
-
-                # If a model/parameter is rejected, try the next supported model.
-                break
-            except requests.RequestException as exc:
-                last_error = exc
-                if attempt == 0:
-                    time.sleep(0.7)
-                    continue
-                break
-
-    if last_response is not None:
-        return last_response
-    if last_error:
-        raise last_error
-    raise RuntimeError("No compatible Groq model is available")
+        max_tokens=Config.MAX_OUTPUT_TOKENS
+    max_tokens=max(64, min(int(max_tokens), 384))
+    payload={"model":model,"messages":messages,"stream":False}
+    if not compound:
+        payload.update({
+            "temperature":0.2,
+            "max_completion_tokens":max_tokens,
+            "reasoning_effort":"low",
+            "include_reasoning":False,
+        })
+    headers={"Authorization":f"Bearer {Config.LLM_API_KEY}","Content-Type":"application/json"}
+    url=Config.GROQ_BASE_URL.rstrip()+"/chat/completions"
+    last=None
+    for attempt in range(3):
+        try:
+            resp=requests.post(url,headers=headers,json=payload,timeout=Config.LLM_TIMEOUT)
+            last=resp
+            if resp.status_code not in (429,500,502,503,504):
+                return resp
+            retry_after=resp.headers.get("retry-after")
+            try: delay=float(retry_after) if retry_after else (0.7*(attempt+1))
+            except ValueError: delay=0.7*(attempt+1)
+            import time
+            time.sleep(min(delay,2.5))
+        except requests.RequestException as exc:
+            last=exc
+            import time
+            time.sleep(0.5*(attempt+1))
+    if isinstance(last, requests.Response):
+        return last
+    raise last or requests.RequestException("AI service request failed")
 
 def _error_detail(resp):
     try:
@@ -574,13 +521,13 @@ def _fallback_document_answer(user_message, doc_context):
     limit=5000 if detailed else 1600
     return ("Based on the uploaded document evidence:\\n\\n"+("\\n\\n".join(parts) if detailed else parts[0]))[:limit]
 
-def _normal_answer(history,user_message,doc_context=None,web_context=None,web_sources=None,mode="auto"):
-    detailed=_is_detailed_request(user_message) or mode in {"deep","study","research"}
-    messages=build_messages(history,user_message,doc_context,mode)
+def _normal_answer(history,user_message,doc_context=None,web_context=None,web_sources=None):
+    detailed=_is_detailed_request(user_message)
+    messages=build_messages(history,user_message,doc_context)
     if web_context:
         messages.insert(-1,{"role":"system","content":"WEB EVIDENCE:\\n"+web_context[:3600 if detailed else 2200]})
     try:
-        max_tokens=700 if detailed else 320
+        max_tokens=384 if detailed else 256
         resp=_groq_request(messages,_resolve_llm_model(),max_tokens=max_tokens,compound=False)
         if resp.ok:
             msg=((resp.json().get("choices") or [{}])[0].get("message") or {})
@@ -597,14 +544,7 @@ def _normal_answer(history,user_message,doc_context=None,web_context=None,web_so
                 return {"answer":_fallback_document_answer(user_message,doc_context),"used_web":False,"sources":[],"answer_mode":"fallback"}
             if web_context:
                 return {"answer":"I found web evidence, but the AI summary is temporarily busy.\\n\\n"+web_context[:1800],"used_web":True,"sources":web_sources or [],"answer_mode":"fallback"}
-        detail = _error_detail(resp) if resp is not None else ""
-        if resp is not None and resp.status_code in (401, 403):
-            answer = "AI service authentication needs attention. Please verify the GROQ_API_KEY in the deployment settings, then redeploy RAGORA."
-        elif resp is not None and resp.status_code == 413:
-            answer = "This request is too large for the AI service. Try a shorter question or ask about a smaller document section."
-        else:
-            answer = "The AI service is temporarily busy. Your message is safe — please try Send again in a moment."
-        return {"answer":answer,"used_web":bool(web_context),"sources":web_sources or [],"answer_mode":"fallback","error_detail":detail[:180]}
+        return {"answer":"I couldn't generate the AI answer right now. Please try again in a moment.","used_web":bool(web_context),"sources":web_sources or []}
     except requests.RequestException:
         if doc_context:
             return {"answer":_fallback_document_answer(user_message,doc_context),"used_web":False,"sources":[],"answer_mode":"fallback"}
@@ -626,21 +566,21 @@ def _needs_web_search(user_message):
         "schedule","2026","2027","இன்று","இப்போ","தற்போது","நேற்று","நாளை"
     ))
 
-def generate_answer(history,user_message,doc_context=None,mode="auto"):
+def generate_answer(history,user_message,doc_context=None):
     if not Config.LLM_API_KEY:
         return {"answer":"Groq API key configure pannala. .env-la GROQ_API_KEY add pannunga.","used_web":False,"sources":[]}
     if _is_casual_chat(user_message):
-        return _normal_answer(history,user_message,None,mode=mode)
+        return _normal_answer(history,user_message,None)
 
     # For current questions, web evidence is added before generation. For normal
     # knowledge questions, uploaded documents remain the primary source.
     if _needs_web_search(user_message) or not doc_context:
         web_context,sources=_duckduckgo_web_context(user_message)
         if web_context:
-            return _normal_answer(history,user_message,doc_context if not _needs_web_search(user_message) else None,web_context,sources,mode)
-        return _normal_answer(history,user_message,doc_context,mode=mode)
+            return _normal_answer(history,user_message,doc_context if not _needs_web_search(user_message) else None,web_context,sources)
+        return _normal_answer(history,user_message,doc_context)
 
-    return _normal_answer(history,user_message,doc_context,mode=mode)
+    return _normal_answer(history,user_message,doc_context)
 
 def generate_title(first_message):
     text=(first_message or "").strip().replace("\n"," ")

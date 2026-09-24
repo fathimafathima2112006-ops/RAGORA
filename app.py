@@ -391,7 +391,7 @@ def api_evaluation_run():
         return jsonify({"error":str(exc)}),400
 
 # ---------------- Chat ----------------
-def _answer_for_conversation(conv_id, user_id, user_message, mode="auto"):
+def _answer_for_conversation(conv_id, user_id, user_message):
     history=db.list_messages(conv_id)
     rows=db.get_chunks_for_user(user_id)
 
@@ -446,8 +446,7 @@ def _answer_for_conversation(conv_id, user_id, user_message, mode="auto"):
         result=rag_engine.generate_answer(
             history,
             user_message[:2000],
-            doc_context,
-            mode=mode
+            doc_context
         )
     except Exception:
         fallback=(
@@ -462,8 +461,7 @@ def _answer_for_conversation(conv_id, user_id, user_message, mode="auto"):
     stats=db.user_document_stats(user_id)
     result["knowledge_docs"]=stats["documents"]
     result["knowledge_chunks"]=stats["chunks"]
-    result["answer_mode"]=result.get("answer_mode") or (mode if mode != "auto" else ("detailed" if detailed else "concise"))
-    result["mode"]=mode
+    result["answer_mode"]=result.get("answer_mode") or ("detailed" if detailed else "concise")
 
     # Document citations are shown only when the generated answer used the
     # uploaded evidence rather than a web-only answer.
@@ -477,9 +475,6 @@ def api_chat():
     data = request.get_json(silent=True) or {}
     conv_id = data.get("conversation_id")
     message = (data.get("message") or "").strip()
-    mode = str(data.get("mode") or "auto").lower()
-    if mode not in {"auto","deep","study","summary","quiz","flashcards","research"}:
-        mode = "auto"
 
     if not conv_id or not message:
         return jsonify({"error": "conversation_id and message required"}), 400
@@ -493,7 +488,7 @@ def api_chat():
         if not conv:
             return jsonify({"error": "conversation_unavailable", "message": "A new chat session could not be opened."}), 503
 
-    result = _answer_for_conversation(conv_id, session["user_id"], message, mode=mode)
+    result = _answer_for_conversation(conv_id, session["user_id"], message)
     db.add_message(conv_id, "user", message)
     db.add_message(conv_id, "assistant", result["answer"], used_web=int(result["used_web"]))
 
@@ -512,7 +507,6 @@ def api_chat():
         "knowledge_docs": result.get("knowledge_docs", 0),
         "knowledge_chunks": result.get("knowledge_chunks", 0),
         "answer_mode": result.get("answer_mode", "concise"),
-        "mode": result.get("mode", mode),
     })
 
 
