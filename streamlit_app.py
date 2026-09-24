@@ -419,6 +419,37 @@ hr {
     --cyan:#22d3ee;
 }
 
+/* Global page scrolling fix */
+html, body {
+    height: auto !important;
+    min-height: 100% !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+}
+
+[data-testid="stAppViewContainer"],
+[data-testid="stAppViewContainer"] > .main,
+main,
+section.main {
+    min-height: 100vh !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+}
+
+.block-container {
+    overflow: visible !important;
+}
+
+/* Long explorer/result panels must scroll instead of locking the whole page. */
+.retrieval-explorer,
+.retrieval-results,
+.explorer-content {
+    max-height: none !important;
+    height: auto !important;
+    overflow: visible !important;
+}
+
 /* Better global background */
 .stApp{
     background:
@@ -849,8 +880,50 @@ def search_chunks(question, chunks, top_k=5):
     ]
 
 
+def answer_profile(question):
+    """Infer the requested answer length from the user's wording.
+
+    Default is normal/medium. The model is explicitly told not to be verbose
+    unless the user asks for detail, so simple questions stay simple.
+    """
+    q = (question or "").strip().lower()
+
+    short_terms = (
+        "short answer", "shortly", "briefly", "in short", "one line",
+        "one sentence", "tl;dr", "summarize", "summary", "குறுகிய",
+        "சுருக்கமாக", "சிறிய பதில்"
+    )
+    detail_terms = (
+        "in detail", "detailed", "detail", "deep explanation",
+        "deeply", "elaborate", "step by step", "step-by-step",
+        "comprehensive", "full explanation", "long answer",
+        "explain thoroughly", "விரிவாக", "விவரமாக", "முழுமையாக"
+    )
+
+    if any(term in q for term in short_terms):
+        return {
+            "style": "short",
+            "max_tokens": 160,
+            "instruction": "Answer very briefly: 1-3 sentences or at most 5 compact bullets. Give only the key answer.",
+        }
+
+    if any(term in q for term in detail_terms):
+        return {
+            "style": "detailed",
+            "max_tokens": 850,
+            "instruction": "Give a detailed, well-structured explanation. Use headings or bullets when helpful, include relevant details from the documents, and explain the reasoning without repeating the entire source text.",
+        }
+
+    return {
+        "style": "normal",
+        "max_tokens": 380,
+        "instruction": "Give a normal, focused answer. Usually 1-4 short paragraphs or a small bullet list. Do not add unnecessary background.",
+    }
+
+
 def generate_answer(question, results):
     api_key = os.getenv("GROQ_API_KEY")
+    profile = answer_profile(question)
 
     if not api_key or Groq is None:
         if not results:
@@ -862,6 +935,9 @@ def generate_answer(question, results):
             "answer cannot be produced yet."
         )
 
+    if not results:
+        return "I couldn't find enough relevant information in your uploaded documents to answer that question."
+
     context = "\n\n".join(
         f"[{r['source']} | page {r['page']}]\n{r['text']}"
         for r in results
@@ -870,16 +946,22 @@ def generate_answer(question, results):
     client = Groq(api_key=api_key)
 
     prompt = f"""
-You are RAG PRO, a helpful document assistant.
+You are RAGORA, a document-grounded AI assistant.
 
-Answer the user's question using ONLY the provided document context.
-If the context does not contain enough information, clearly say so.
-Do not invent facts.
+STRICT SOURCE RULES:
+- Use the provided document context as the primary and only factual source.
+- Do not invent facts or fill missing information with outside knowledge.
+- If the documents do not contain enough information, say that clearly.
+- Do not dump or copy the whole retrieved context. Extract only what answers the question.
+- Answer in the same language as the user's question when practical.
 
-Question:
+ANSWER LENGTH:
+{profile['instruction']}
+
+USER QUESTION:
 {question}
 
-Document context:
+RETRIEVED DOCUMENT CONTEXT:
 {context}
 """
 
@@ -888,7 +970,11 @@ Document context:
         messages=[
             {
                 "role": "system",
-                "content": "You answer questions from provided documents.",
+                "content": (
+                    "You are a precise RAG document assistant. "
+                    "Match answer length to the user's explicit request. "
+                    "Simple questions should receive concise answers; requests for detail should receive detailed answers."
+                ),
             },
             {
                 "role": "user",
@@ -896,10 +982,10 @@ Document context:
             },
         ],
         temperature=0.2,
-        max_tokens=900,
+        max_tokens=profile["max_tokens"],
     )
 
-    return response.choices[0].message.content
+    return response.choices[0].message.content.strip()
 
 
 def load_user_chunks(user_id):

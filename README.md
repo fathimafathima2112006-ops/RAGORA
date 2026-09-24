@@ -1,82 +1,71 @@
-# RAGORA Professional 2.0
+# RAGORA — Professional AI Document Assistant
 
-This build fixes the recurring Groq 120B TPM problem by **hard-locking normal RAG/companion traffic to `openai/gpt-oss-20b`** and never honoring stale `openai/gpt-oss-120b` or retired Llama 3.1 8B values from older `.env` files.
+A polished Streamlit Retrieval-Augmented Generation (RAG) workspace for private PDF question answering.
 
-## Routing
-- Strong document match -> compact GPT-OSS 20B RAG request.
-- No document match / current question -> `groq/compound-mini` live web route.
-- If the 20B request hits 429/413/5xx -> no repeated retry storm; a local document-evidence fallback is returned.
-- If web summarization is unavailable -> lightweight DuckDuckGo snippet fallback is used.
-- GPT-OSS uses `reasoning_effort=low` to reduce unnecessary reasoning tokens.
-- Prompt/history/context are deliberately capped for the user's 8K TPM environment.
+## Features
+
+- Secure local username/password authentication with salted PBKDF2 hashing
+- Multi-user document isolation
+- PDF upload and page extraction
+- Semantic search with `sentence-transformers`
+- Keyword fallback when embeddings are unavailable
+- Grounded answers through Groq
+- Source filename + page references
+- Persistent SQLite chat history
+- Document management and delete controls
+- Professional dark blue / purple glass UI
+- Render-ready configuration with persistent disk
+
+## 1. Run locally
+
+Use Python 3.11 or 3.12.
+
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+Copy `.env.example` to `.env` and add your Groq key.
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Then start:
+
+```powershell
+python -m streamlit run app.py
+```
+
+## 2. GitHub upload
+
+Keep these files/folders in the repository root:
+
+- `app.py`
+- `auth.py`
+- `db.py`
+- `config.py`
+- `requirements.txt`
+- `render.yaml`
+- `.env.example`
+- `.gitignore`
+- `.streamlit/config.toml`
+- `README.md`
+
+Do **not** upload `.env`, your virtual environment, or the local SQLite database.
+
+## 3. Render deployment
+
+Create a Render Web Service from the GitHub repository. The included `render.yaml` starts Streamlit correctly:
+
+```text
+streamlit run app.py --server.address 0.0.0.0 --server.port $PORT --server.headless true
+```
+
+Add `GROQ_API_KEY` as a secret environment variable in Render. The included persistent disk stores the SQLite database and uploaded PDFs.
 
 ## Important
-Groq rate limits are organization-level. A code change cannot raise an 8K TPM account limit. This build is designed to avoid wasteful token usage and to fail gracefully instead of showing raw Groq errors.
 
-## Run
-1. Extract this folder.
-2. Copy `.env.example` to `.env` and set `GROQ_API_KEY`.
-3. If you have an old `.env`, it is safe to leave an old model value there; RAGORA ignores it and uses the safe model selection.
-4. Run the same startup command you used for the previous build.
-
-## Production note
-Use persistent storage for `DB_PATH` and `UPLOAD_DIR` on hosted platforms.
-
-## RAGORA Final-Year Project Edition
-
-RAGORA is a Flask-based Retrieval-Augmented Question & Answer platform with a premium dark-first UI and a transparent technical demonstration layer.
-
-### What is included
-- Document ingestion for PDF, DOCX, TXT, CSV, XLSX and source/code formats
-- Text extraction and chunking with overlap
-- Hybrid retrieval: TF-IDF similarity + BM25 + keyword overlap + reciprocal-rank fusion + reranking
-- Grounded LLM answers with numbered source citations
-- Source Viewer and Chunk Explorer
-- Retrieval Explorer showing query → retrieval → Top-K → context → LLM flow
-- Analytics & Evaluation using `eval_dataset.json` with Hit Rate@K, Precision@K, MRR and average retrieval confidence
-- Chat history, export, responsive mobile navigation and theme toggle
-- Google OAuth and existing Groq/Compound web-search integration preserved
-
-### Honest evaluation
-The Analytics screen does not invent scores. Until you run an evaluation against a real `eval_dataset.json` and indexed documents, metrics are shown as unavailable. The starter dataset should be edited with the actual filenames that are relevant to your project questions.
-
-### Run locally
-1. Create a virtual environment and install `requirements.txt`.
-2. Copy `.env.example` to `.env` and add your own credentials.
-3. Run `python app.py`.
-4. Open the local Flask URL shown in the terminal.
-
-Never commit your real `.env` or API credentials.
-
-
-## Production reliability
-
-For the Flask web UI, use a persistent database/storage target in production. Vercel function-local `/tmp` storage is ephemeral and can cause a conversation created in one invocation to be missing in another. If Vercel is used as the public gateway, route API traffic to the persistent Render service (or use a managed database/object store). The UI now self-recovers from stale chat IDs, but durable storage is still required for reliable history and uploaded documents.
-
-
-## RAGORA 3.0 AI experience
-
-- Hybrid TF-IDF + BM25 + RRF retrieval with reranking.
-- Adaptive concise vs detailed answers.
-- Grounded source cards with click-to-open full evidence.
-- Multi-file upload with sequential indexing and progress feedback.
-- PDF, DOCX, PPTX, TXT, Markdown, CSV, XLSX, JSON and common source-code files.
-- Web-aware fallback without the retired Groq Compound models.
-- Mobile-friendly professional workspace and Retrieval Explorer.
-- SQLite WAL/busy-timeout tuning for more reliable concurrent requests.
-
-
-## RAGORA Professional AI 3.5
-
-This build adds a polished AI workspace with:
-
-- Adaptive AI modes: Auto, Deep Think, Study Tutor, Document Summary, Quiz Builder, Flashcards and Research.
-- Grounded hybrid retrieval with TF-IDF, BM25, RRF and lexical reranking.
-- Compact source cards with click-to-open full evidence.
-- Regenerate, copy and lightweight answer feedback controls.
-- Voice input where browser Speech Recognition is available.
-- Drag-and-drop multi-file uploads and sequential processing.
-- Up to 500 MB per file at the application layer (hosting platforms may impose their own request limits).
-- PDF, DOCX, PPTX, TXT, Markdown, CSV, XLSX, JSON and source-code extraction.
-- Mobile-first light professional UI with responsive workspace and Retrieval Explorer.
-- Groq OpenAI-compatible API using `openai/gpt-oss-20b`; no retired Compound model dependency.
+This project is a Streamlit application. Do not use `gunicorn app:app` or configure it as a Flask application.
