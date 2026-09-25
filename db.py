@@ -142,16 +142,23 @@ def get_user(user_id):
 
 # ---------- Conversations ----------
 def create_conversation(user_id, title="New Chat"):
+    # Never insert a child row for a missing user. This is especially important
+    # on Vercel because /tmp SQLite is per-function-instance and a session may
+    # arrive from an instance that had a different local database.
     conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO conversations (user_id, title, created_at) VALUES (?, ?, ?)",
-        (user_id, title, now()),
-    )
-    conn.commit()
-    conv_id = cur.lastrowid
-    conn.close()
-    return conv_id
+    try:
+        exists = conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not exists:
+            raise ValueError("user_not_found")
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO conversations (user_id, title, created_at) VALUES (?, ?, ?)",
+            (user_id, title, now()),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
 
 
 def list_conversations(user_id):

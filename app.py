@@ -61,11 +61,39 @@ def _cleanup_expired_states():
 def login_required(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
-        if "user_id" not in session:
-            if request.path.startswith("/api/"):
-                return jsonify({"error": "not_authenticated"}), 401
-            return redirect(url_for("login_page"))
-        return f(*args, **kwargs)
+        # Vercel Functions can run on different ephemeral instances. A signed
+        # Flask session may contain a user_id from another instance whose
+        # /tmp SQLite database does not contain that row. Re-hydrate the user
+        # from the stable Google identity stored in the session before any FK
+        # backed operation runs.
+        user_id = session.get("user_id")
+        if user_id:
+            user = db.get_user(user_id)
+            if user:
+                return f(*args, **kwargs)
+
+            google_id = session.get("google_id")
+            email = session.get("email")
+            if google_id and email:
+                user = db.get_or_create_user(
+                    google_id,
+                    email,
+                    session.get("name") or email.split("@", 1)[0],
+                    session.get("picture", ""),
+                )
+                session["user_id"] = user["id"]
+                session["name"] = user.get("name") or session.get("name")
+                session["picture"] = user.get("picture") or session.get("picture", "")
+                return f(*args, **kwargs)
+
+            # Old sessions created before google_id/email were stored cannot
+            # safely be repaired. Force a clean login instead of producing a
+            # SQLite FOREIGN KEY 500 error.
+            session.clear()
+
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "not_authenticated", "message": "Please sign in again."}), 401
+        return redirect(url_for("login_page"))
     return wrapper
 
 
@@ -177,7 +205,12 @@ def auth_callback():
 
         session.clear()
         session.permanent = True
+        # Store the stable Google identity as well as the local SQLite id.
+        # This lets Vercel recreate the local user row when a request lands on
+        # a fresh function instance with a fresh /tmp database.
         session["user_id"] = user["id"]
+        session["google_id"] = google_id
+        session["email"] = email
         session["name"] = user["name"]
         session["picture"] = user["picture"]
         return redirect(url_for("index"))
@@ -237,7 +270,13 @@ def api_list_conversations():
 @app.route("/api/conversations", methods=["POST"])
 @login_required
 def api_create_conversation():
-    conv_id = db.create_conversation(session["user_id"])
+    try:
+        conv_id = db.create_conversation(session["user_id"])
+    except ValueError:
+        session.clear()
+        return jsonify({"error": "session_expired", "message": "Please sign in again."}), 401
+    except Exception:
+        return jsonify({"error": "conversation_unavailable", "message": "RAGORA could not open a new chat. Please retry."}), 503
     return jsonify({"id": conv_id, "title": "New Chat"})
 
 
@@ -494,7 +533,13 @@ def api_chat():
     if not conv:
         # Recover from stale conversation ids after restarts/deploys instead of
         # exposing a raw 404 to the chat UI. The frontend also retries once.
-        conv_id = db.create_conversation(session["user_id"])
+        try:
+            conv_id = db.create_conversation(session["user_id"])
+        except ValueError:
+            session.clear()
+            return jsonify({"error": "session_expired", "message": "Please sign in again."}), 401
+        except Exception:
+            return jsonify({"error": "conversation_unavailable", "message": "RAGORA could not open a new chat. Please retry."}), 503
         conv = db.get_conversation(conv_id, session["user_id"])
         if not conv:
             return jsonify({"error": "conversation_unavailable", "message": "A new chat session could not be opened."}), 503
