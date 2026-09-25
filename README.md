@@ -1,38 +1,66 @@
-# RAGORA PRO Stability + UX v2
+# RAGORA Professional 2.0
 
-This package adds a safer AI-error UX plus extra UI polish without changing your Python dependencies.
+This build fixes the recurring Groq 120B TPM problem by **hard-locking normal RAG/companion traffic to `openai/gpt-oss-20b`** and never honoring stale `openai/gpt-oss-120b` or retired Llama 3.1 8B values from older `.env` files.
 
-## 1) Add the CSS
-In `templates/chat.html`, before `</head>`:
+## Routing
+- Strong document match -> compact GPT-OSS 20B RAG request.
+- No document match / current question -> `groq/compound-mini` live web route.
+- If the 20B request hits 429/413/5xx -> no repeated retry storm; a local document-evidence fallback is returned.
+- If web summarization is unavailable -> lightweight DuckDuckGo snippet fallback is used.
+- GPT-OSS uses `reasoning_effort=low` to reduce unnecessary reasoning tokens.
+- Prompt/history/context are deliberately capped for the user's 8K TPM environment.
 
-```html
-<link rel="stylesheet" href="{{ url_for('static', filename='css/pro_stability_ux.css', v='2') }}">
-```
+## Important
+Groq rate limits are organization-level. A code change cannot raise an 8K TPM account limit. This build is designed to avoid wasteful token usage and to fail gracefully instead of showing raw Groq errors.
 
-## 2) Add the JS
-After `chat.js` and before `</body>`:
+## Run
+1. Extract this folder.
+2. Copy `.env.example` to `.env` and set `GROQ_API_KEY`.
+3. If you have an old `.env`, it is safe to leave an old model value there; RAGORA ignores it and uses the safe model selection.
+4. Run the same startup command you used for the previous build.
 
-```html
-<script src="{{ url_for('static', filename='js/pro_stability_ux.js', v='2') }}"></script>
-```
+## Production note
+Use persistent storage for `DB_PATH` and `UPLOAD_DIR` on hosted platforms.
 
-## 3) Important AI-error change
-The old global fetch patch should NOT show every 5xx as “AI service is temporarily busy”. This v2 patch only observes the response and does not replace the app's request flow.
+## RAGORA Final-Year Project Edition
 
-The real permanent backend fix still needs the `/api/chat` route and Groq request layer to return structured errors, retry transient failures, and fall back safely. Do not add `RENDER_URL`; this is for the Vercel-only setup.
+RAGORA is a Flask-based Retrieval-Augmented Question & Answer platform with a premium dark-first UI and a transparent technical demonstration layer.
 
-## UX included
-- animated glass background
-- AI online / working / offline status pill
-- quick prompt chips
-- voice playback + language selector
-- stop-speaking dock
-- answer Copy / Listen / Helpful / Improve controls
-- local feedback storage
-- light/dark theme toggle
-- Ctrl/Cmd+K composer shortcut
-- mobile responsive drawer/voice styling
-- reduced-motion accessibility support
+### What is included
+- Document ingestion for PDF, DOCX, TXT, CSV, XLSX and source/code formats
+- Text extraction and chunking with overlap
+- Hybrid retrieval: TF-IDF similarity + BM25 + keyword overlap + reciprocal-rank fusion + reranking
+- Grounded LLM answers with numbered source citations
+- Source Viewer and Chunk Explorer
+- Retrieval Explorer showing query → retrieval → Top-K → context → LLM flow
+- Analytics & Evaluation using `eval_dataset.json` with Hit Rate@K, Precision@K, MRR and average retrieval confidence
+- Chat history, export, responsive mobile navigation and theme toggle
+- Google OAuth and existing Groq/Compound web-search integration preserved
 
-## Note
-Voice playback uses the browser's speech synthesis. It changes spoken language/voice selection; it does not translate the answer text itself.
+### Honest evaluation
+The Analytics screen does not invent scores. Until you run an evaluation against a real `eval_dataset.json` and indexed documents, metrics are shown as unavailable. The starter dataset should be edited with the actual filenames that are relevant to your project questions.
+
+### Run locally
+1. Create a virtual environment and install `requirements.txt`.
+2. Copy `.env.example` to `.env` and add your own credentials.
+3. Run `python app.py`.
+4. Open the local Flask URL shown in the terminal.
+
+Never commit your real `.env` or API credentials.
+
+
+## Production reliability
+
+For the Flask web UI, use a persistent database/storage target in production. Vercel function-local `/tmp` storage is ephemeral and can cause a conversation created in one invocation to be missing in another. If Vercel is used as the public gateway, route API traffic to the persistent Render service (or use a managed database/object store). The UI now self-recovers from stale chat IDs, but durable storage is still required for reliable history and uploaded documents.
+
+
+## RAGORA 3.0 AI experience
+
+- Hybrid TF-IDF + BM25 + RRF retrieval with reranking.
+- Adaptive concise vs detailed answers.
+- Grounded source cards with click-to-open full evidence.
+- Multi-file upload with sequential indexing and progress feedback.
+- PDF, DOCX, PPTX, TXT, Markdown, CSV, XLSX, JSON and common source-code files.
+- Web-aware fallback without the retired Groq Compound models.
+- Mobile-friendly professional workspace and Retrieval Explorer.
+- SQLite WAL/busy-timeout tuning for more reliable concurrent requests.

@@ -435,30 +435,47 @@ def _groq_request(messages, model=None, max_tokens=None, compound=False):
     max_tokens=max(64, min(int(max_tokens), 384))
     payload={"model":model,"messages":messages,"stream":False}
     if not compound:
+        # Keep the request to the documented Chat Completions surface.
+        # GPT-OSS supports low reasoning effort, while avoiding optional
+        # parameters that can vary between Groq model/runtime versions.
         payload.update({
-            "temperature":0.2,
+            "temperature":0.5,
             "max_completion_tokens":max_tokens,
             "reasoning_effort":"low",
-            "include_reasoning":False,
         })
     headers={"Authorization":f"Bearer {Config.LLM_API_KEY}","Content-Type":"application/json"}
     url=Config.GROQ_BASE_URL.rstrip()+"/chat/completions"
     last=None
-    for attempt in range(3):
-        try:
-            resp=requests.post(url,headers=headers,json=payload,timeout=Config.LLM_TIMEOUT)
-            last=resp
-            if resp.status_code not in (429,500,502,503,504):
-                return resp
-            retry_after=resp.headers.get("retry-after")
-            try: delay=float(retry_after) if retry_after else (0.7*(attempt+1))
-            except ValueError: delay=0.7*(attempt+1)
-            import time
-            time.sleep(min(delay,2.5))
-        except requests.RequestException as exc:
-            last=exc
-            import time
-            time.sleep(0.5*(attempt+1))
+    # First try the resolved model. If the account/model list is stale, retry
+    # once with the known-good GPT-OSS 20B model and a minimal payload.
+    models_to_try=[model]
+    if _PRIMARY_MODEL not in models_to_try:
+        models_to_try.append(_PRIMARY_MODEL)
+    for model_index, active_model in enumerate(models_to_try):
+        request_payload=dict(payload)
+        request_payload["model"]=active_model
+        for attempt in range(3):
+            try:
+                resp=requests.post(url,headers=headers,json=request_payload,timeout=Config.LLM_TIMEOUT)
+                last=resp
+                if resp.ok:
+                    return resp
+                # 400/404 can mean a stale model or an unsupported optional
+                # field. On the first model, fall through to the known-good
+                # model with a minimal documented request.
+                if resp.status_code in (400,404) and model_index == 0 and len(models_to_try)>1:
+                    break
+                if resp.status_code not in (429,500,502,503,504):
+                    return resp
+                retry_after=resp.headers.get("retry-after")
+                try: delay=float(retry_after) if retry_after else (0.7*(attempt+1))
+                except ValueError: delay=0.7*(attempt+1)
+                import time
+                time.sleep(min(delay,2.5))
+            except requests.RequestException as exc:
+                last=exc
+                import time
+                time.sleep(0.5*(attempt+1))
     if isinstance(last, requests.Response):
         return last
     raise last or requests.RequestException("AI service request failed")

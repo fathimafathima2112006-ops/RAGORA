@@ -203,7 +203,18 @@ def logout():
 # ---------------- Main ----------------
 @app.route("/health")
 def health():
-    return jsonify({"ok": True, "service": "RAGORA", "groq_configured": bool(Config.GROQ_API_KEY)})
+    return jsonify({"ok": True, "service": "RAGORA", "groq_configured": bool(Config.GROQ_API_KEY), "model": Config.GROQ_MODEL})
+
+
+@app.route("/api/ai-status")
+def ai_status():
+    """Safe runtime diagnostic: never returns the API key itself."""
+    return jsonify({
+        "ok": bool(Config.LLM_API_KEY),
+        "groq_configured": bool(Config.GROQ_API_KEY),
+        "model": Config.GROQ_MODEL,
+        "base_url": Config.GROQ_BASE_URL,
+    })
 
 
 @app.route("/")
@@ -488,7 +499,19 @@ def api_chat():
         if not conv:
             return jsonify({"error": "conversation_unavailable", "message": "A new chat session could not be opened."}), 503
 
-    result = _answer_for_conversation(conv_id, session["user_id"], message)
+    try:
+        result = _answer_for_conversation(conv_id, session["user_id"], message)
+    except Exception as exc:
+        # Do not turn an upstream/model hiccup into a Vercel 500. The browser
+        # can keep the conversation alive and the user message is preserved.
+        result = {
+            "answer": "RAGORA AI is temporarily unavailable. Your message was saved. Please try Send again shortly.",
+            "used_web": False,
+            "sources": [],
+            "citations": [],
+            "answer_mode": "fallback",
+            "error": type(exc).__name__,
+        }
     db.add_message(conv_id, "user", message)
     db.add_message(conv_id, "assistant", result["answer"], used_web=int(result["used_web"]))
 
