@@ -1,38 +1,38 @@
-# RAGORA Pro UI Upgrade
+# RAGORA PRO Stability + UX v2
 
-This is a drop-in UI/UX enhancement for the existing Flask RAGORA app.
+This package adds a safer AI-error UX plus extra UI polish without changing your Python dependencies.
 
-## Included
-- Cleaner Google account card + separate Logout button
-- Voice playback for every AI answer
-- Auto-voice toggle
-- Voice language selector using browser Speech Synthesis
-- Tamil, Hindi, Telugu, Malayalam, Kannada, Bengali, Marathi, Gujarati, Punjabi,
-  Urdu, Arabic, French, German, Spanish, Italian, Portuguese, Russian, Japanese,
-  Korean, Chinese, Indonesian and English presets
-- Helpful / Improve feedback buttons (stored locally in the browser)
-- Source cards remain compact; tapping/clicking opens full evidence details
-- Animated ambient effects and polished voice player
-- Mobile-friendly controls
+## 1) Add the CSS
+In `templates/chat.html`, before `</head>`:
 
-## Install into the current repo
+```html
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro_stability_ux.css', v='2') }}">
+```
 
-1. Copy:
-   static/css/pro_upgrade.css
-   -> RAGORA/static/css/pro_upgrade.css
+## 2) Add the JS
+After `chat.js` and before `</body>`:
 
-2. Copy:
-   static/js/pro_upgrade.js
-   -> RAGORA/static/js/pro_upgrade.js
+```html
+<script src="{{ url_for('static', filename='js/pro_stability_ux.js', v='2') }}"></script>
+```
 
-3. In templates/chat.html, immediately before </head>, add:
-   <link rel="stylesheet" href="{{ url_for('static', filename='css/pro_upgrade.css', v='pro1') }}">
+## 3) Important AI-error change
+The old global fetch patch should NOT show every 5xx as “AI service is temporarily busy”. This v2 patch only observes the response and does not replace the app's request flow.
 
-4. Immediately before </body>, after chat.js, add:
-   <script src="{{ url_for('static', filename='js/pro_upgrade.js', v='pro1') }}"></script>
+The real permanent backend fix still needs the `/api/chat` route and Groq request layer to return structured errors, retry transient failures, and fall back safely. Do not add `RENDER_URL`; this is for the Vercel-only setup.
 
-No Python dependency changes are required.
+## UX included
+- animated glass background
+- AI online / working / offline status pill
+- quick prompt chips
+- voice playback + language selector
+- stop-speaking dock
+- answer Copy / Listen / Helpful / Improve controls
+- local feedback storage
+- light/dark theme toggle
+- Ctrl/Cmd+K composer shortcut
+- mobile responsive drawer/voice styling
+- reduced-motion accessibility support
 
-Note:
-Browser speech playback can only use languages/voices exposed by the user's device/browser.
-The language selector chooses the voice locale; it does not translate an answer.
+## Note
+Voice playback uses the browser's speech synthesis. It changes spoken language/voice selection; it does not translate the answer text itself.
