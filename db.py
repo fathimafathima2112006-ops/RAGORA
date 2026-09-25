@@ -9,12 +9,12 @@ os.makedirs(os.path.dirname(Config.DB_PATH), exist_ok=True)
 def get_db():
     conn = sqlite3.connect(
         Config.DB_PATH,
-        timeout=20,
+        timeout=30,
         check_same_thread=False,
     )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 20000")
+    conn.execute("PRAGMA busy_timeout = 30000")
     try:
         conn.execute("PRAGMA journal_mode = WAL")
     except sqlite3.DatabaseError:
@@ -108,30 +108,51 @@ def now():
     return datetime.utcnow().isoformat()
 
 
+def _run_write(operation, attempts=5):
+    """Run one SQLite write with short exponential retries for serverless contention."""
+    last_error = None
+    for attempt in range(attempts):
+        conn = get_db()
+        try:
+            result = operation(conn)
+            conn.commit()
+            return result
+        except sqlite3.OperationalError as exc:
+            conn.rollback()
+            last_error = exc
+            if "database is locked" not in str(exc).lower() and "database is busy" not in str(exc).lower():
+                raise
+            import time
+            time.sleep(0.12 * (2 ** attempt))
+        finally:
+            conn.close()
+    if last_error:
+        raise last_error
+
+
 # ---------- Users ----------
 def get_or_create_user(google_id, email, name, picture):
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM users WHERE google_id = ?", (google_id,))
-    user = cur.fetchone()
-    if user is None:
-        cur.execute(
-            "INSERT INTO users (google_id, email, name, picture, created_at) VALUES (?, ?, ?, ?, ?)",
-            (google_id, email, name, picture, now()),
-        )
-        conn.commit()
-        user_id = cur.lastrowid
-        cur.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+    def operation(conn):
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM users WHERE google_id = ?", (google_id,))
         user = cur.fetchone()
-    else:
-        cur.execute(
-            "UPDATE users SET name = ?, picture = ? WHERE id = ?",
-            (name, picture, user["id"]),
-        )
-        conn.commit()
-    conn.close()
-    return dict(user)
-
+        if user is None:
+            cur.execute(
+                "INSERT INTO users (google_id, email, name, picture, created_at) VALUES (?, ?, ?, ?, ?)",
+                (google_id, email, name, picture, now()),
+            )
+            user_id = cur.lastrowid
+            cur.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+            user = cur.fetchone()
+        else:
+            cur.execute(
+                "UPDATE users SET name = ?, picture = ? WHERE id = ?",
+                (name, picture, user["id"]),
+            )
+            cur.execute("SELECT * FROM users WHERE id = ?", (user["id"],))
+            user = cur.fetchone()
+        return dict(user)
+    return _run_write(operation)
 
 def get_user(user_id):
     conn = get_db()
@@ -142,11 +163,7 @@ def get_user(user_id):
 
 # ---------- Conversations ----------
 def create_conversation(user_id, title="New Chat"):
-    # Never insert a child row for a missing user. This is especially important
-    # on Vercel because /tmp SQLite is per-function-instance and a session may
-    # arrive from an instance that had a different local database.
-    conn = get_db()
-    try:
+    def operation(conn):
         exists = conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone()
         if not exists:
             raise ValueError("user_not_found")
@@ -155,11 +172,8 @@ def create_conversation(user_id, title="New Chat"):
             "INSERT INTO conversations (user_id, title, created_at) VALUES (?, ?, ?)",
             (user_id, title, now()),
         )
-        conn.commit()
         return cur.lastrowid
-    finally:
-        conn.close()
-
+    return _run_write(operation)
 
 def list_conversations(user_id):
     conn = get_db()
@@ -180,34 +194,26 @@ def get_conversation(conv_id, user_id):
 
 
 def rename_conversation(conv_id, title):
-    conn = get_db()
-    conn.execute("UPDATE conversations SET title = ? WHERE id = ?", (title, conv_id))
-    conn.commit()
-    conn.close()
-
+    def operation(conn):
+        conn.execute("UPDATE conversations SET title = ? WHERE id = ?", (title, conv_id))
+    _run_write(operation)
 
 def delete_conversation(conv_id, user_id):
-    conn = get_db()
-    conn.execute(
-        "DELETE FROM conversations WHERE id = ? AND user_id = ?", (conv_id, user_id)
-    )
-    conn.commit()
-    conn.close()
+    def operation(conn):
+        conn.execute(
+            "DELETE FROM conversations WHERE id = ? AND user_id = ?", (conv_id, user_id)
+        )
+    _run_write(operation)
 
-
-# ---------- Messages ----------
 def add_message(conversation_id, role, content, used_web=0):
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO messages (conversation_id, role, content, used_web, created_at) VALUES (?, ?, ?, ?, ?)",
-        (conversation_id, role, content, used_web, now()),
-    )
-    conn.commit()
-    msg_id = cur.lastrowid
-    conn.close()
-    return msg_id
-
+    def operation(conn):
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO messages (conversation_id, role, content, used_web, created_at) VALUES (?, ?, ?, ?, ?)",
+            (conversation_id, role, content, used_web, now()),
+        )
+        return cur.lastrowid
+    return _run_write(operation)
 
 def list_messages(conversation_id):
     conn = get_db()
@@ -220,41 +226,33 @@ def list_messages(conversation_id):
 
 
 def delete_last_assistant_message(conversation_id):
-    conn = get_db()
-    row = conn.execute(
-        "SELECT id FROM messages WHERE conversation_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1",
-        (conversation_id,),
-    ).fetchone()
-    if row:
-        conn.execute("DELETE FROM messages WHERE id = ?", (row["id"],))
-        conn.commit()
-    conn.close()
+    def operation(conn):
+        row = conn.execute(
+            "SELECT id FROM messages WHERE conversation_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1",
+            (conversation_id,),
+        ).fetchone()
+        if row:
+            conn.execute("DELETE FROM messages WHERE id = ?", (row["id"],))
+    _run_write(operation)
 
-
-# ---------- Documents ----------
 def add_document(user_id, conversation_id, filename, filepath):
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO documents (user_id, conversation_id, filename, filepath, created_at) VALUES (?, ?, ?, ?, ?)",
-        (user_id, conversation_id, filename, filepath, now()),
-    )
-    conn.commit()
-    doc_id = cur.lastrowid
-    conn.close()
-    return doc_id
-
+    def operation(conn):
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO documents (user_id, conversation_id, filename, filepath, created_at) VALUES (?, ?, ?, ?, ?)",
+            (user_id, conversation_id, filename, filepath, now()),
+        )
+        return cur.lastrowid
+    return _run_write(operation)
 
 def add_chunks(document_id, chunks):
-    conn = get_db()
-    cur = conn.cursor()
-    cur.executemany(
-        "INSERT INTO doc_chunks (document_id, chunk_index, chunk_text) VALUES (?, ?, ?)",
-        [(document_id, i, c) for i, c in enumerate(chunks)],
-    )
-    conn.commit()
-    conn.close()
-
+    def operation(conn):
+        cur = conn.cursor()
+        cur.executemany(
+            "INSERT INTO doc_chunks (document_id, chunk_index, chunk_text) VALUES (?, ?, ?)",
+            [(document_id, i, c) for i, c in enumerate(chunks)],
+        )
+    _run_write(operation)
 
 def list_documents(user_id, conversation_id=None):
     # Documents belong to the user's Knowledge base. conversation_id is accepted
@@ -295,11 +293,9 @@ def get_chunks_for_conversation(conversation_id):
 
 
 def delete_document(doc_id, user_id):
-    conn = get_db()
-    conn.execute("DELETE FROM documents WHERE id = ? AND user_id = ?", (doc_id, user_id))
-    conn.commit()
-    conn.close()
-
+    def operation(conn):
+        conn.execute("DELETE FROM documents WHERE id = ? AND user_id = ?", (doc_id, user_id))
+    _run_write(operation)
 
 def user_document_stats(user_id):
     """Total documents + total chunks collected across ALL of a user's chats."""
@@ -319,17 +315,14 @@ def user_document_stats(user_id):
 
 # ---------- AI Chat (companion) ----------
 def add_companion_message(user_id, role, content):
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO companion_messages (user_id, role, content, created_at) VALUES (?, ?, ?, ?)",
-        (user_id, role, content, now()),
-    )
-    conn.commit()
-    msg_id = cur.lastrowid
-    conn.close()
-    return msg_id
-
+    def operation(conn):
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO companion_messages (user_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+            (user_id, role, content, now()),
+        )
+        return cur.lastrowid
+    return _run_write(operation)
 
 def list_companion_messages(user_id, limit=60):
     conn = get_db()
@@ -343,12 +336,10 @@ def list_companion_messages(user_id, limit=60):
 
 
 def clear_companion_messages(user_id):
-    conn = get_db()
-    conn.execute("DELETE FROM companion_messages WHERE user_id = ?", (user_id,))
-    conn.commit()
-    conn.close()
+    def operation(conn):
+        conn.execute("DELETE FROM companion_messages WHERE user_id = ?", (user_id,))
+    _run_write(operation)
 
-# ---------- Product analytics / explorer helpers ----------
 def get_document_chunks(document_id, user_id):
     conn = get_db()
     rows = conn.execute("""
